@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Admin • Students & Attendance</title>
+  <!-- Tailwind -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Supabase JS v2 (UMD) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+  <style>
+    html,body{background:#0b0b0f;color:#e8e8ee;font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Inter,Arial}
+    .card{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:16px}
+    .btn{border-radius:10px;padding:.6rem .9rem}
+    .btn-prim{background:#4f46e5}
+    .btn-prim:hover{background:#6366f1}
+    .btn-soft{background:rgba(255,255,255,.08)}
+    .btn-soft:hover{background:rgba(255,255,255,.12)}
+    table thead{background:rgba(255,255,255,.05)}
+  </style>
+</head>
+<body>
+  <!-- Topbar -->
+  <header class="sticky top-0 z-20 backdrop-blur bg-black/40 border-b border-white/10">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+      <h1 class="font-bold tracking-wide">Admin • Students & Attendance</h1>
+      <div class="flex items-center gap-2">
+        <a href="/scan" target="_blank" class="btn btn-soft text-sm">Open Face Scan</a>
+        <div id="userBox" class="hidden items-center gap-3">
+          <span id="userEmail" class="text-sm text-white/70"></span>
+          <button id="signOutBtn" class="btn btn-soft text-sm">Sign out</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Auth -->
+  <section id="authSection" class="max-w-md mx-auto mt-16 p-6 card">
+    <h2 class="text-xl font-semibold mb-4">Login</h2>
+    <div class="space-y-3">
+      <input id="email" type="email" placeholder="Email" class="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg outline-none" />
+      <input id="password" type="password" placeholder="Password" class="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg outline-none" />
+      <button id="loginBtn" class="w-full btn btn-prim">Sign in</button>
+      <p class="text-xs text-white/60">RLS is <b>disabled</b> in your project. This panel allows any <i>authenticated</i> user to access the dashboard (no admins allow-list check).</p>
+      <pre id="authDebug" class="text-xs text-white/60 whitespace-pre-wrap hidden"></pre>
+    </div>
+  </section>
+
+  <!-- Dashboard -->
+  <main id="dash" class="hidden max-w-6xl mx-auto px-4 py-6">
+    <!-- Tabs -->
+    <div class="flex items-center gap-2 border-b border-white/10 mb-4">
+      <button data-tab="students" class="tab btn btn-soft bg-white/10">Students</button>
+      <button data-tab="attendance" class="tab btn btn-soft">Attendance</button>
+    </div>
+
+    <!-- Students Tab -->
+    <section id="tab-students" class="space-y-4">
+      <div class="flex flex-wrap items-center gap-2">
+        <input id="studentSearch" placeholder="Search name / roll / class" class="px-3 py-2 bg-white/5 border border-white/10 rounded-lg outline-none" />
+        <select id="classFilter" class="px-3 py-2 bg-white/5 border border-white/10 rounded-lg">
+          <option value="">All Classes</option>
+        </select>
+        <button id="addStudentBtn" class="btn btn-prim">+ Add Student</button>
+        <button id="exportStudentsBtn" class="btn btn-soft">Export CSV</button>
+      </div>
+
+      <!-- Add/Edit Form -->
+      <form id="studentForm" class="hidden grid md:grid-cols-3 gap-3 p-4 card">
+        <input type="hidden" id="studentId" />
+        <input id="rollNo" placeholder="Roll No" class="px-3 py-2 bg-white/5 border border-white/10 rounded-lg" />
+        <input id="fullName" placeholder="Full Name" class="px-3 py-2 bg-white/5 border border-white/10 rounded-lg" />
+        <input id="className" placeholder="Class (e.g., 10-A)" class="px-3 py-2 bg-white/5 border border-white/10 rounded-lg" />
+        <input id="phone" placeholder="Phone (optional)" class="px-3 py-2 bg-white/5 border border-white/10 rounded-lg" />
+        <input id="guardian" placeholder="Guardian (optional)" class="px-3 py-2 bg-white/5 border border-white/10 rounded-lg" />
+        <label class="inline-flex items-center gap-2"><input id="isActive" type="checkbox" class="h-4 w-4" /> <span class="text-sm">Active</span></label>
+        <div class="md:col-span-3 flex gap-2">
+          <button id="saveStudent" class="btn btn-prim">Save</button>
+          <button type="button" id="cancelStudent" class="btn btn-soft">Cancel</button>
+        </div>
+      </form>
+
+      <!-- List -->
+      <div class="overflow-x-auto card">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="[&>th]:px-3 [&>th]:py-2 text-left">
+              <th>Roll</th><th>Name</th><th>Class</th><th>Phone</th><th>Guardian</th><th>Status</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="studentsTbody" class="[&>tr:nth-child(even)]:bg-white/5"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Attendance Tab -->
+    <section id="tab-attendance" class="hidden space-y-4">
+      <div class="flex flex-wrap items-center gap-2">
+        <input id="attDate" type="date" class="px-3 py-2 bg-white/5 border border-white/10 rounded-lg" />
+        <select id="attClassFilter" class="px-3 py-2 bg-white/5 border border-white/10 rounded-lg">
+          <option value="">All Classes</option>
+        </select>
+        <button id="loadAttendanceBtn" class="btn btn-soft">Load</button>
+        <button id="bulkEntryNow" class="btn btn-prim">Set Entry=Now for all</button>
+        <button id="saveAttendanceBtn" class="btn btn-prim">Save All</button>
+        <button id="exportAttendanceBtn" class="btn btn-soft">Export CSV</button>
+      </div>
+
+      <div class="overflow-x-auto card">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="[&>th]:px-3 [&>th]:py-2 text-left">
+              <th>Roll</th><th>Name</th><th>Entry</th><th>Exit</th><th>Notes</th>
+            </tr>
+          </thead>
+          <tbody id="attendanceTbody" class="[&>tr:nth-child(even)]:bg-white/5"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- Toast -->
+  <div id="toast" class="fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg bg-white/10 border border-white/20 text-sm hidden"></div>
+
+<script>
+// ====== CONFIG ======
+const SUPABASE_URL = "https://qddapdswtxsnjnndktko.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFkZGFwZHN3dHhzbmpubmRrdGtvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ1NzgzOTksImV4cCI6MjA3MDE1NDM5OX0.to1dMhmIqxA6tkiCgyb9_L4B84F4QbPHqL1wyHf0V4E";
+
+// Use same-origin for FastAPI endpoints (served by app.py)
+const API_BASE = "";
+
+// RLS is disabled: let any authenticated user access the dashboard
+const REQUIRE_ADMIN = false;
+
+if(!window.supabase){ alert('Supabase SDK failed to load.'); }
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: { persistSession: true, autoRefreshToken: true, storageKey: 'jk_admin_session' }
+});
+
+// ====== Helpers ======
+const qs = s => document.querySelector(s);
+const qsa = s => Array.from(document.querySelectorAll(s));
+const show = el => el.classList.remove('hidden');
+const hide = el => el.classList.add('hidden');
+function toast(msg){ const t=qs('#toast'); t.textContent=msg; show(t); setTimeout(()=>hide(t),2000); }
+const onlyHMS = t => t ? (t+"").slice(0,8) : '';
+function escapeHtml(s){ return (s||"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
+function downloadCSV(rows, filename){
+  const csv = rows.map(r => r.map(cell => {
+    const s = (cell??'').toString().replaceAll('"','""');
+    return `"${s}"`;
+  }).join(',')).join('\n');
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename; a.click(); URL.revokeObjectURL(a.href);
+}
+
+// ====== Auth UI ======
+const authSection = qs('#authSection');
+const dash = qs('#dash');
+const userBox = qs('#userBox');
+const userEmail = qs('#userEmail');
+const authDebug = qs('#authDebug');
+
+qs('#loginBtn').onclick = async ()=>{
+  authDebug.classList.remove('hidden');
+  authDebug.textContent = 'Signing in…';
+  const email = qs('#email').value.trim();
+  const password = qs('#password').value;
+  if(!email || !password){ toast('Enter email & password'); return; }
+  const {error} = await sb.auth.signInWithPassword({ email, password });
+  if(error){ authDebug.textContent = 'Sign-in error: ' + error.message; toast(error.message); return; }
+  authDebug.textContent = 'Signed in.';
+  await initApp();
+};
+
+qs('#signOutBtn').onclick = async ()=>{ await sb.auth.signOut(); location.reload(); };
+
+async function initApp(){
+  const { data: { user }, error } = await sb.auth.getUser();
+  if(error){ toast('Auth error: '+error.message); return; }
+  if(!user){ hide(userBox); show(authSection); hide(dash); return; }
+  userEmail.textContent = user.email || user.id; show(userBox);
+
+  if(!REQUIRE_ADMIN){
+    hide(authSection); show(dash);
+    setDefaultDate(); switchTab('students');
+    await Promise.all([loadStudents(), populateClassFilters()]);
+    authDebug.textContent=''; authDebug.classList.add('hidden');
+    return;
+  }
+}
+
+sb.auth.onAuthStateChange((_event, session) => {
+  if(session && session.user){ initApp(); }
+  else { hide(dash); show(authSection); }
+});
+
+// ====== Tabs ======
+qsa('.tab').forEach(b=> b.onclick = ()=> switchTab(b.dataset.tab));
+function switchTab(tab){
+  qsa('.tab').forEach(b=> b.classList.toggle('bg-white/10', b.dataset.tab===tab));
+  hide(qs('#tab-students')); hide(qs('#tab-attendance'));
+  if(tab==='students') show(qs('#tab-students')); else show(qs('#tab-attendance'));
+}
+
+// ====== Class Filters ======
+async function populateClassFilters(){
+  const { data, error } = await sb.from('students').select('class').order('class', { ascending: true });
+  if(error){ console.warn(error); return; }
+  const classes = Array.from(new Set((data||[]).map(r=>r.class).filter(Boolean)));
+  const classFilter = qs('#classFilter');
+  const attClassFilter = qs('#attClassFilter');
+  classFilter.innerHTML = '<option value="">All Classes</option>' + classes.map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+  attClassFilter.innerHTML = '<option value="">All Classes</option>' + classes.map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+}
+
+// ====== Students CRUD ======
+const studentsState = { rows: [] };
+const studentsTbody = qs('#studentsTbody');
+const studentForm = qs('#studentForm');
+
+qs('#addStudentBtn').onclick = ()=>{ studentForm.reset?.(); qs('#studentId').value=''; qs('#isActive').checked=true; show(studentForm); };
+qs('#cancelStudent').onclick = ()=> hide(studentForm);
+
+qs('#saveStudent').onclick = async (e)=>{
+  e.preventDefault();
+  const id = qs('#studentId').value || null;
+  const row = {
+    roll_no: qs('#rollNo').value.trim(),
+    full_name: qs('#fullName').value.trim(),
+    class: qs('#className').value.trim(),
+    phone: qs('#phone').value.trim() || null,
+    guardian_name: qs('#guardian').value.trim() || null,
+    is_active: qs('#isActive').checked
+  };
+  if(!row.roll_no || !row.full_name || !row.class) return toast('Fill roll, name, class');
+  let resp; if(id){ resp = await sb.from('students').update(row).eq('id', id).select().single(); }
+  else { resp = await sb.from('students').insert(row).select().single(); }
+  if(resp.error) return toast(resp.error.message);
+  toast('Saved'); hide(studentForm); await loadStudents(); await populateClassFilters();
+};
+
+async function loadStudents(){
+  const { data, error } = await sb.from('students').select('*').order('created_at', { ascending:false });
+  if(error){ toast(error.message); return; }
+  studentsState.rows = data||[]; renderStudents();
+}
+
+function renderStudents(){
+  const q = (qs('#studentSearch').value||'').toLowerCase();
+  const cls = qs('#classFilter').value || '';
+  const rows = studentsState.rows.filter(r=>{
+    const matchesQ = !q || (r.full_name?.toLowerCase().includes(q) || r.roll_no?.toLowerCase().includes(q) || r.class?.toLowerCase().includes(q));
+    const matchesC = !cls || r.class === cls; return matchesQ && matchesC;
+  });
+  studentsTbody.innerHTML = rows.map(r=>`
+    <tr class="[&>td]:px-3 [&>td]:py-2 border-b border-white/5">
+      <td>${r.roll_no||''}</td>
+      <td>${r.full_name||''}</td>
+      <td>${r.class||''}</td>
+      <td>${r.phone||''}</td>
+      <td>${r.guardian_name||''}</td>
+      <td>${r.is_active?'<span class="text-emerald-400">Active</span>':'<span class="text-amber-400">Inactive</span>'}</td>
+      <td class="text-right space-x-2">
+        <label class="px-2 py-1 text-xs btn-soft cursor-pointer">
+          <input type="file" accept="image/*" class="hidden" onchange="enrollFaceByRoll('${r.roll_no}', this)" />
+          Enroll Face
+        </label>
+        <button class="px-2 py-1 text-xs btn-soft" onclick='editStudent("${r.id}")'>Edit</button>
+        <button class="px-2 py-1 text-xs bg-red-600/80 rounded hover:bg-red-600" onclick='delStudent("${r.id}")'>Delete</button>
+      </td>
+    </tr>`).join('');
+}
+
+qs('#studentSearch').oninput = renderStudents;
+qs('#classFilter').onchange = renderStudents;
+
+window.editStudent = id => {
+  const r = studentsState.rows.find(x=>x.id===id); if(!r) return;
+  qs('#studentId').value = r.id;
+  qs('#rollNo').value = r.roll_no||'';
+  qs('#fullName').value = r.full_name||'';
+  qs('#className').value = r.class||'';
+  qs('#phone').value = r.phone||'';
+  qs('#guardian').value = r.guardian_name||'';
+  qs('#isActive').checked = !!r.is_active; show(studentForm);
+};
+
+window.delStudent = async id => {
+  if(!confirm('Delete this student?')) return;
+  const { error } = await sb.from('students').delete().eq('id', id);
+  if(error) return toast(error.message);
+  toast('Deleted'); await loadStudents(); await populateClassFilters();
+};
+
+qs('#exportStudentsBtn').onclick = ()=>{
+  const rows = [['roll_no','full_name','class','phone','guardian_name','is_active']];
+  studentsState.rows.forEach(r=> rows.push([r.roll_no, r.full_name, r.class, r.phone||'', r.guardian_name||'', r.is_active?'1':'0']));
+  downloadCSV(rows, 'students.csv');
+};
+
+// ====== Attendance ======
+const attendanceTbody = qs('#attendanceTbody');
+function setDefaultDate(){ const d=new Date(); qs('#attDate').value = d.toISOString().slice(0,10); }
+qs('#loadAttendanceBtn').onclick = ()=>loadAttendance();
+qs('#bulkEntryNow').onclick = ()=>{ const d=new Date(); const t=`${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`; qsa('input[name="entry"]').forEach(i=>{ if(!i.value) i.value=t; }); };
+qs('#saveAttendanceBtn').onclick = ()=>saveAttendance();
+qs('#exportAttendanceBtn').onclick = ()=>exportAttendanceCSV();
+
+async function loadAttendance(){
+  const date = qs('#attDate').value; const cls = qs('#attClassFilter').value || '';
+  if(!date) return toast('Pick a date');
+  const studentsQuery = sb.from('students').select('*').eq('is_active', true).order('full_name', { ascending:true });
+  if(cls) studentsQuery.eq('class', cls);
+  const [{data: studs, error: e1}, {data: atts, error: e2}] = await Promise.all([
+    studentsQuery,
+    sb.from('attendance_daily').select('*').eq('att_date', date)
+  ]);
+  if(e1||e2){ console.error(e1||e2); return toast('Load failed'); }
+  const map = new Map((atts||[]).map(a=>[a.student_id, a]));
+  attendanceTbody.innerHTML = (studs||[]).map(s=>{
+    const a = map.get(s.id)||{};
+    return `<tr class="[&>td]:px-3 [&>td]:py-2 border-b border-white/5">
+      <td>${s.roll_no||''}</td>
+      <td>${s.full_name||''}</td>
+      <td><input type="time" step="1" name="entry" data-sid="${s.id}" value="${onlyHMS(a.entry_time)||''}" class="px-2 py-1 bg-white/5 border border-white/10 rounded w-36"></td>
+      <td><input type="time" step="1" name="exit" data-sid="${s.id}" value="${onlyHMS(a.exit_time)||''}" class="px-2 py-1 bg-white/5 border border-white/10 rounded w-36"></td>
+      <td><input type="text" name="notes" data-sid="${s.id}" value="${escapeHtml(a.notes||'')}" class="px-2 py-1 bg-white/5 border border-white/10 rounded w-64" placeholder="optional"></td>
+    </tr>`;
+  }).join('');
+}
+
+async function saveAttendance(){
+  const date = qs('#attDate').value; if(!date) return toast('Pick a date');
+  const entryBy = Object.fromEntries(qsa('input[name="entry"]').map(i=>[i.dataset.sid,i]));
+  const exitBy  = Object.fromEntries(qsa('input[name="exit"]').map(i=>[i.dataset.sid,i]));
+  const notesBy = Object.fromEntries(qsa('input[name="notes"]').map(i=>[i.dataset.sid,i]));
+  const sids = Object.keys(entryBy);
+  const rows = sids.map(sid=>({ student_id: sid, att_date: date, entry_time: entryBy[sid].value||null, exit_time: (exitBy[sid]&&exitBy[sid].value)||null, notes: (notesBy[sid]&&notesBy[sid].value)||null }));
+  if(!rows.length) return toast('Nothing to save');
+  const { error } = await sb.from('attendance_daily').upsert(rows, { onConflict: 'student_id,att_date' });
+  if(error) return toast(error.message); toast('Attendance saved'); await loadAttendance();
+}
+
+function exportAttendanceCSV(){
+  const date = qs('#attDate').value; const rows = [['roll','name','entry','exit','notes']];
+  attendanceTbody.querySelectorAll('tr').forEach(tr=>{
+    const tds = tr.querySelectorAll('td');
+    rows.push([
+      tds[0].textContent.trim(),
+      tds[1].textContent.trim(),
+      tds[2].querySelector('input').value||'',
+      tds[3].querySelector('input').value||'',
+      tds[4].querySelector('input').value||''
+    ]);
+  });
+  downloadCSV(rows, `attendance_${date||'unknown'}.csv`);
+}
+
+// ====== Enroll Face (by roll number) ======
+window.enrollFaceByRoll = async (rollNo, inputEl) => {
+  const f = inputEl.files?.[0];
+  if (!f) { toast('No file selected'); return; }
+  const fd = new FormData();
+  fd.append('file', f, f.name);
+  try {
+    const r = await fetch(`${API_BASE}/enroll_by_roll?roll_no=${encodeURIComponent(rollNo)}`, {
+      method: 'POST', body: fd
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j?.detail || j?.message || 'Enroll failed');
+    toast('Face enrolled');
+  } catch (e) {
+    console.error(e);
+    toast('Enroll failed: ' + e.message);
+  } finally {
+    inputEl.value = '';
+  }
+};
+
+// Restore session on page load
+(async () => {
+  const { data: { session } } = await sb.auth.getSession();
+  if(session && session.user){ initApp(); } else { show(authSection); }
+})();
+</script>
+</body>
+</html>
