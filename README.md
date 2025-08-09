@@ -159,7 +159,7 @@ numpy
 ![Admin Dashboard](/admin2.png)
 
 ### Scan Page
-![Scan Page](assets/scan.png)
+![Scan Page](/scan.png)
 ---
 
 ## 👨‍💻 Developer
