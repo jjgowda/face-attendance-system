@@ -150,6 +150,17 @@ numpy
 ```
 
 ---
+## 📸 Screenshots
+
+### Admin Dashboard
+![Admin Dashboard](/admin.png)
+
+### Admin Attendance
+![Admin Dashboard](/admin2.png)
+
+### Scan Page
+![Scan Page](assets/scan.png)
+---
 
 ## 👨‍💻 Developer
 
