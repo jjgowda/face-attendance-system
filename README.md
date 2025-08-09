@@ -1,9 +1,4 @@
-Here’s a clean **GitHub-ready README.md** for your **Face Recognition Attendance System** project.
-It’s detailed enough for others to understand, install, and run your work — while also giving you full credit.
 
----
-
-```markdown
 # 🎯 Face Recognition Attendance System
 
 A **Python + FastAPI + Supabase** powered attendance system with **real-time face recognition**.  
