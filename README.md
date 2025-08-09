@@ -153,7 +153,7 @@ numpy
 ## 📸 Screenshots
 
 ### Admin Dashboard
-![Admin Dashboard](/admin.png)
+![Admin Dashboard](/Admin.png)
 
 ### Admin Attendance
 ![Admin Dashboard](/admin2.png)
