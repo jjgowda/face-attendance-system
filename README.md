@@ -154,8 +154,8 @@ numpy
 ## 👨‍💻 Developer
 
 **Jeevan Gowda**
-💼 GitHub: [@yourusername](https://github.com/yourusername)
-📧 Email: [your.email@example.com](mailto:your.email@example.com)
+💼 GitHub: [@jjgowda](https://github.com//jjgowda)
+📧 Email: [cyberxstudios@protonmail.com](mailto:cyberxstudios@protonmail.com)
 
 ---
 
@@ -164,5 +164,4 @@ numpy
 This project is licensed under the MIT License.
 Feel free to use, modify, and distribute with attribution.
 
-```
 
