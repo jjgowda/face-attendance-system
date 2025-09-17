@@ -49,7 +49,7 @@ Developed by **Jeevan Gowda** 🚀
 
 1️⃣ **Clone the repository**
 ```bash
-git clone https://github.com/yourusername/face-attendance.git
+git clone https://github.com/jjgowda/face-attendance.git
 cd face-attendance
 ````
 
