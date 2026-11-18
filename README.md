@@ -5,7 +5,7 @@ A blue-and-white mobile website for a team of five. No Python server or always-o
 ## Features
 
 - Employee self-registration using an admin-issued registration code and three face samples.
-- Select your name and verify your face to check in or check out.
+- Select your name and check in or check out; the camera automatically detects and verifies your face.
 - Server-side face-template comparison; biometric templates are never included in employee list responses.
 - Fresh, high-accuracy browser geolocation checked on the server against the office boundary.
 - One check-in and one check-out per employee per IST calendar day; duplicate scans and challenge replays rejected.
@@ -28,8 +28,8 @@ Office: **R3 Square Pvt Ltd**, coordinates **13.0942949, 77.5505004**, **500 m**
 1. Open **`/admin`** on the deployed website.
 2. Enter the one-time setup code supplied privately by the deployment operator and choose an admin password of at least 12 characters.
 3. Copy the employee registration code from **Office & registration**. Share it privately with the five employees.
-4. Each employee opens the website in Safari or Chrome, opens **`/register`**, enters their name, a unique employee ID (e.g. `R3-01`) and the registration code, agrees to face-template use, then captures their face.
-5. Employees use **Mark attendance**, select their name and choose check in or check out. Allow camera and location when prompted.
+4. Each employee opens the website in Safari or Chrome, opens **`/register`**, enters their name, a unique employee ID (e.g. `R3-01`) and the registration code, agrees to face-template use, then their face is captured automatically.
+5. Employees use **Mark attendance**, select their name and choose check in or check out. Camera and location permissions are requested when employee pages open; browsers may require an explicit tap if they block automatic prompts. The camera used for the initial permission check is stopped immediately. Face models load only when a scan starts.
 6. Assign locker numbers from the admin screen. Locker assignments do not operate physical locks.
 
 The setup code stops working once the admin account is created. Admin sessions expire after 12 hours. Keep the admin password and registration code private. Employees can register again after the admin deletes their old registration; deletion also removes that employee's attendance history, with confirmation in the UI.

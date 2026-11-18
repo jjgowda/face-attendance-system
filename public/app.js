@@ -1,47 +1,77 @@
+import {collectFaceSamples} from '/face-scan.js';
 const page = document.documentElement.dataset.page;
 let pendingRequests = 0;
 function requestLoading(start) { pendingRequests = Math.max(0,pendingRequests+(start?1:-1)); document.body.dataset.loading=String(pendingRequests>0); }
 const $ = s=>document.querySelector(s);
-const state={config:null,employees:[],models:null,stream:null,capture:null,generation:0,admin:null};
+const state={config:null,employees:[],models:null,library:null,stream:null,generation:0,admin:null,permissionPromise:null,permissionBusy:false};
 const time = value=>value?new Date(value).toLocaleTimeString('en-IN',{timeZone:'Asia/Kolkata',hour:'2-digit',minute:'2-digit'}):'—';
 const message = (text,error=false)=>{const el=$('#notice');el.hidden=false;el.textContent=text;el.classList.toggle('error',error);};
 async function api(path,data) {requestLoading(true);try{const r=await fetch('/api/'+path,{method:data===undefined?'GET':'POST',headers:data===undefined?{}:{'Content-Type':'application/json'},body:data===undefined?undefined:JSON.stringify(data)});let b;try{b=await r.json();}catch{throw Error('Unable to reach the attendance service. Please retry.');}if(!r.ok)throw Object.assign(Error(b.error||'Request failed.'),{status:r.status});return b;}finally{requestLoading(false);}}
 async function loadEmployees() {const field=$('#employee');field.disabled=true;field.setAttribute('aria-busy','true');try{const b=await api('employees');state.employees=b.employees;const select=$('#employee'),selected=select.value||localStorage.getItem('r3-employee');select.replaceChildren(new Option(b.employees.length?'Choose your name':'No employees yet — register your face',''));for(const e of b.employees)select.add(new Option(e.name+' · '+e.code,e.id));if(b.employees.some(e=>e.id===selected))select.value=selected;}finally{field.disabled=false;field.setAttribute('aria-busy','false');}}
 function tab(register) {$('#attendanceForm').hidden=register;$('#registerForm').hidden=!register;$('#attendanceTab').classList.toggle('active',!register);$('#registerTab').classList.toggle('active',register);$('#attendanceTab').setAttribute('aria-selected',String(!register));$('#registerTab').setAttribute('aria-selected',String(register));$('#notice').hidden=true;}
 $('#attendanceTab').onclick=()=>tab(false);$('#registerTab').onclick=()=>tab(true);
-for(const radio of document.querySelectorAll('[name=action]'))radio.onchange=()=>{$('#scanButton').replaceChildren(document.createTextNode(`Verify & check ${radio.value==='in'?'in':'out'}  →`));};
+for(const radio of document.querySelectorAll('[name=action]'))radio.onchange=()=>{$('#scanButton').replaceChildren(document.createTextNode(`Check ${radio.value==='in'?'in':'out'}`));};
 function cameraError(e) {if(e.name==='NotAllowedError')return 'Camera permission was denied. Allow camera access in your browser settings and retry.';if(e.name==='NotFoundError')return 'No camera found on this device.';if(e.name==='NotReadableError')return 'The camera is busy. Close other camera apps and retry.';return e.message||'Could not start camera.';}
-async function models() {if(!window.faceapi)throw Error('Face scanner could not load. Refresh the page and try again.');if(!state.models)state.models=Promise.all([faceapi.nets.tinyFaceDetector.loadFromUri('/models'),faceapi.nets.faceLandmark68TinyNet.loadFromUri('/models'),faceapi.nets.faceRecognitionNet.loadFromUri('/models')]).catch(e=>{state.models=null;throw Error('Face models could not load. Check your internet connection and retry.');});return state.models;}
+async function models() {
+ if(!window.faceapi){
+  if(!state.library)state.library=new Promise((resolve,reject)=>{const script=document.createElement('script');script.src='/vendor/face-api.js';script.onload=resolve;script.onerror=()=>{script.remove();state.library=null;reject(Error('Could not load the face scanner. Check your connection and retry.'));};document.head.append(script);});
+  await state.library;
+ }
+ if(!state.models)state.models=Promise.all([faceapi.nets.tinyFaceDetector.loadFromUri('/models'),faceapi.nets.faceLandmark68TinyNet.loadFromUri('/models'),faceapi.nets.faceRecognitionNet.loadFromUri('/models')]).catch(()=>{state.models=null;throw Error('Face models could not load. Check your connection and retry.');});
+ return state.models;
+}
+async function preparePermissions() {
+ if(state.permissionBusy)return state.permissionPromise;
+ state.permissionBusy=true;
+ state.permissionPromise=(async()=>{
+  const notice=$('#permissionNotice'),label=$('#permissionText'),button=$('#enablePermissions');
+  notice.hidden=false;label.textContent='Allow camera and location access when your browser asks.';button.hidden=true;notice.setAttribute('aria-busy','true');
+  const errors=[];
+  try{if(!navigator.mediaDevices?.getUserMedia)throw Error();const stream=await navigator.mediaDevices.getUserMedia({video:true,audio:false});stream.getTracks().forEach(t=>t.stop());}catch{errors.push('camera');}
+  if(state.config.office.enabled){try{await location();}catch{errors.push('location');}}
+  notice.removeAttribute('aria-busy');state.permissionBusy=false;
+  if(errors.length){label.textContent='Allow '+errors.join(' and ')+' access to mark attendance. You can enable it in your browser settings.';button.hidden=false;}else notice.hidden=true;
+ })();
+ return state.permissionPromise;
+}
+$('#enablePermissions').onclick=()=>void preparePermissions();
 function stopCamera(){state.generation++;state.stream?.getTracks().forEach(t=>t.stop());state.stream=null;$('#video').srcObject=null;}
 $('#closeCamera').onclick=()=>$('#cameraDialog').close();$('#cameraDialog').addEventListener('close',stopCamera);
 async function openCamera(mode,onCapture) {
- const generation=++state.generation;state.capture={mode,onCapture};$('#cameraTitle').textContent=mode==='register'?'Register your face':'Verify your face';$('#cameraStatus').textContent='Starting camera and loading face scanner…';$('#captureButton').disabled=true;$('#captureButton').textContent=mode==='register'?'Capture & register face':'Capture & verify face';$('#cameraProgress span').style.width='0%';$('#cameraDialog').showModal();
+ const generation=++state.generation,dialog=$('#cameraDialog');
+ $('#cameraTitle').textContent=mode==='register'?'Register your face':'Verifying your face';
+ $('#cameraStatus').textContent='Starting camera…';$('#cameraProgress span').style.width='0%';dialog.dataset.scanning='true';dialog.showModal();
  try {
+  if(state.permissionBusy)await state.permissionPromise;
+  if(generation!==state.generation)return;
   if(!navigator.mediaDevices?.getUserMedia)throw Error('Open this website in Safari or Chrome over HTTPS to use the camera.');
   const modelReady=models();modelReady.catch(()=>{});
   const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});
-  if(generation!==state.generation){stream.getTracks().forEach(t=>t.stop());return;}state.stream=stream;const v=$('#video');v.srcObject=stream;await v.play();await modelReady;
-  if(generation!==state.generation)return;$('#cameraStatus').textContent='Place your face inside the oval, then tap capture.';$('#captureButton').disabled=false;
- }catch(e){if(generation!==state.generation)return;$('#cameraStatus').textContent=cameraError(e);state.stream?.getTracks().forEach(t=>t.stop());state.stream=null;}
+  if(generation!==state.generation){stream.getTracks().forEach(t=>t.stop());return;}
+  state.stream=stream;const video=$('#video');video.srcObject=stream;await video.play();
+  $('#cameraStatus').textContent='Preparing face verification…';await modelReady;
+  if(generation!==state.generation)return;
+  void automaticScan(mode,onCapture,generation);
+ }catch(e){if(generation!==state.generation)return;$('#cameraStatus').textContent=cameraError(e);dialog.dataset.scanning='false';stopCamera();}
 }
-$('#captureButton').onclick=async()=>{
- const button=$('#captureButton'),generation=state.generation,{mode,onCapture}=state.capture;button.disabled=true;
+async function automaticScan(mode,onCapture,generation) {
+ const active=()=>generation===state.generation && $('#cameraDialog').open;
  try {
-  const samples=[],count=mode==='register'?3:2,v=$('#video');
-  for(let i=0;i<count;i++){
-   if(generation!==state.generation)return;$('#cameraStatus').textContent=`Hold still — capturing ${i+1} of ${count}…`;
-   const canvas=document.createElement('canvas');canvas.width=640;canvas.height=Math.round(640*v.videoHeight/v.videoWidth);canvas.getContext('2d').drawImage(v,0,0,canvas.width,canvas.height);
-   const faces=await faceapi.detectAllFaces(canvas,new faceapi.TinyFaceDetectorOptions({inputSize:320,scoreThreshold:.65})).withFaceLandmarks(true).withFaceDescriptors();
-   if(generation!==state.generation)return;
-   if(!faces.length)throw Error('No clear face found. Face the camera in good light and try again.');if(faces.length!==1)throw Error('Please keep only your face in the frame.');if(faces[0].detection.box.width<95)throw Error('Move a little closer to the camera and try again.');
-   samples.push(Array.from(faces[0].descriptor));$('#cameraProgress span').style.width=`${(i+1)/count*100}%`;
-   if(i<count-1)await new Promise(resolve=>setTimeout(resolve,350));
-  }
-  $('#cameraStatus').textContent=mode==='register'?'Saving your registration…':'Checking office location…';
-  await onCapture(samples,()=>generation===state.generation);
-  if(generation===state.generation)$('#cameraDialog').close();
- }catch(e){if(generation===state.generation){$('#cameraStatus').textContent=e.message;button.disabled=false;button.textContent='Try capture again';}}
-};
+  const canvas=document.createElement('canvas'),video=$('#video');
+  const descriptors=await collectFaceSamples({count:mode==='register'?3:2,isActive:active,
+   report:(text,progress)=>{$('#cameraStatus').textContent=text;$('#cameraProgress span').style.width=`${progress*100}%`;},
+   detect:async()=>{
+    if(!video.videoWidth)return [];
+    canvas.width=640;canvas.height=Math.round(640*video.videoHeight/video.videoWidth);canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height);
+    const faces=await faceapi.detectAllFaces(canvas,new faceapi.TinyFaceDetectorOptions({inputSize:320,scoreThreshold:.65})).withFaceLandmarks(true).withFaceDescriptors();
+    return faces.map(face=>({width:face.detection.box.width,descriptor:face.descriptor}));
+   }});
+  if(!descriptors||!active())return;
+  $('#cameraStatus').textContent=mode==='register'?'Saving your registration…':'Checking your location…';
+  await onCapture(descriptors,active);
+  if(active())$('#cameraDialog').close();
+ }catch(e){if(active()){$('#cameraStatus').textContent=e.message;$('#cameraDialog').dataset.scanning='false';stopCamera();}}
+}
 async function location() {if(!state.config.office.enabled)return null;if(!navigator.geolocation)throw Error('This browser does not support location. Use Safari or Chrome.');return new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(p=>resolve({lat:p.coords.latitude,lng:p.coords.longitude,accuracy:p.coords.accuracy,timestamp:p.timestamp}),e=>reject(Error(e.code===1?'Location access was denied. Allow location in browser settings and retry.':'Could not get an accurate location. Move near a window and retry.')),{enableHighAccuracy:true,maximumAge:0,timeout:20000}));}
 $('#attendanceForm').onsubmit=async e=>{e.preventDefault();const employeeId=$('#employee').value,action=$('input[name=action]:checked').value;if(!employeeId)return;localStorage.setItem('r3-employee',employeeId);await openCamera('verify',async(descriptors,active)=>{const loc=await location();if(!active())return;$('#cameraStatus').textContent='Verifying your face…';const {challenge}=await api('challenge',{employeeId});if(!active())return;const result=await api('attendance',{descriptors,challenge,action,location:loc});message(`${result.message}, ${result.name}.\n${time(result.time)} IST${result.locker?' · Locker '+result.locker:''}${result.distance!==null?' · '+result.distance+' m from office':''}`);});};
 $('#registerForm').onsubmit=async e=>{e.preventDefault();const details={name:$('#fullName').value.trim(),code:$('#employeeCode').value.trim(),registrationCode:$('#registrationCode').value.trim(),consent:$('#consent').checked};await openCamera('register',async(descriptors,active)=>{if(!active())return;const result=await api('register',{...details,descriptors});localStorage.setItem('r3-employee',result.id);await loadEmployees();window.location.assign('/?registered=1');});};
@@ -56,11 +86,11 @@ async function loadAdmin(){const panel=$('#adminDashboard');panel.setAttribute('
 }finally{panel.setAttribute('aria-busy','false');}}
 async function adminAction(button,fn){button.disabled=true;button.classList.add('is-loading');button.setAttribute('aria-busy','true');try{await fn();await loadAdmin();}catch(e){alert(e.message);}finally{button.disabled=false;button.classList.remove('is-loading');button.removeAttribute('aria-busy');}}
 $('#attendanceDate').onchange=()=>loadAdmin().catch(e=>alert(e.message));
-$('#settingsForm').onsubmit=async e=>{e.preventDefault();const button=$('#settingsForm button');button.disabled=true;try{const office={lat:Number($('#officeLat').value),lng:Number($('#officeLng').value),radius:Number($('#officeRadius').value),enabled:$('#geoEnabled').checked};await api('admin/settings',{office,registrationCode:$('#adminRegCode').value});state.config.office=office;$('#radius').textContent=office.radius;$('#settingsMessage').textContent='Settings saved.';}catch(e){$('#settingsMessage').textContent=e.message;}finally{button.disabled=false;}};
+$('#settingsForm').onsubmit=async e=>{e.preventDefault();const button=$('#settingsForm button');button.disabled=true;try{const office={lat:Number($('#officeLat').value),lng:Number($('#officeLng').value),radius:Number($('#officeRadius').value),enabled:$('#geoEnabled').checked};await api('admin/settings',{office,registrationCode:$('#adminRegCode').value});state.config.office=office;$('#settingsMessage').textContent='Settings saved.';}catch(e){$('#settingsMessage').textContent=e.message;}finally{button.disabled=false;}};
 $('#adminLogout').onclick=async()=>{try{await api('admin/logout',{});await openAdmin();}catch(e){alert(e.message);}};
 $('#exportCsv').onclick=()=>{const cell=v=>'"'+String(v??'').replace(/^[=+@-]/,"'$&").replaceAll('"','""')+'"';const rows=[['Employee ID','Name','Date (IST)','Check in (IST)','Check out (IST)','Locker'],...state.admin.attendance.map(a=>[a.code,a.name,a.day,time(a.check_in),time(a.check_out),a.locker])];const blob=new Blob(['\ufeff'+rows.map(r=>r.map(cell).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`R3-Square-attendance-${state.admin.day}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
 $('#today').textContent=new Date().toLocaleDateString('en-IN',{timeZone:'Asia/Kolkata',weekday:'long',day:'numeric',month:'short',year:'numeric'});
-async function init(){try{state.config=await api('config');$('#radius').textContent=state.config.office.radius;await loadEmployees();if(window.location.hash==='#admin'){window.location.replace('/admin');return;}if(page==='admin')await openAdmin();else if(new URLSearchParams(window.location.search).has('registered'))message('Your face is registered. You can now check in.');}catch(e){message(e.message,true);$('#employee').replaceChildren(new Option('Could not load team — refresh to retry',''));}}
+async function init(){try{state.config=await api('config');if(page!=='admin')void preparePermissions();await loadEmployees();if(window.location.hash==='#admin'){window.location.replace('/admin');return;}if(page==='admin')await openAdmin();else if(new URLSearchParams(window.location.search).has('registered'))message('Your face is registered. You can now check in.');}catch(e){message(e.message,true);$('#employee').replaceChildren(new Option('Could not load team — refresh to retry',''));}}
 // Keep each action responsive while its camera or network request is starting.
 for (const [id,label] of [['attendanceForm','Opening camera…'],['registerForm','Opening camera…'],['adminAuth','Signing in…'],['settingsForm','Saving…']]) {
  const form=$('#'+id),submit=form.onsubmit;
