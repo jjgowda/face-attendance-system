@@ -70,6 +70,17 @@ async function api(req,env,url) {
  if(path==='/api/admin/login'&&method==='POST') {await rate(db,`login:${ip}`,8);const b=await body(req),a=await setting(db,'admin');if(!a||typeof b.password!=='string'||b.password.length>128||!await equal(await passwordHash(b.password,a.salt),a.hash))fail('Password is incorrect.',401);return json({ok:true},200,{'Set-Cookie':await makeSession(db)});}
  if(path.startsWith('/api/admin/')) {
   await admin(req,db);
+  if(path==='/api/admin/password'&&method==='POST') {
+   await rate(db,`password:${ip}`,8);const b=await body(req),a=await setting(db,'admin');
+   if(!a||typeof b.currentPassword!=='string'||b.currentPassword.length>128||!await equal(await passwordHash(b.currentPassword,a.salt),a.hash))fail('Current password is incorrect.',403);
+   if(typeof b.newPassword!=='string'||b.newPassword.length<12||b.newPassword.length>128)fail('Use a new password of 12–128 characters.');
+   if(b.newPassword!==b.confirmPassword)fail('New passwords do not match.');
+   if(await equal(b.currentPassword,b.newPassword))fail('Choose a different password from your current one.');
+   const salt=crypto.randomUUID(),updated={salt,hash:await passwordHash(b.newPassword,salt)};
+   const result=await db.batch([db.prepare("UPDATE settings SET value=? WHERE key='admin' AND value=?").bind(JSON.stringify(updated),JSON.stringify(a)),db.prepare('DELETE FROM sessions')]);
+   if(!result[0].meta.changes)fail('The password changed in another session. Please sign in again.',409);
+   return json({ok:true},200,{'Set-Cookie':'r3_session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0'});
+  }
   if(path==='/api/admin/logout'&&method==='POST') {const token=(req.headers.get('Cookie')||'').match(/(?:^|;\s*)r3_session=([^;]+)/)?.[1];await db.prepare('DELETE FROM sessions WHERE token=?').bind(await hash(token)).run();return json({ok:true},200,{'Set-Cookie':'r3_session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0'});}
   if(path==='/api/admin/data'&&method==='GET') {const day=url.searchParams.get('day')||istDay();if(!/^\d{4}-\d{2}-\d{2}$/.test(day))fail('Invalid date.');const {results:employees}=await db.prepare('SELECT id,name,code,locker,active,created_at,registration_code,(json_array_length(descriptors)>0) AS registered FROM employees ORDER BY name').all();const {results:attendance}=await db.prepare('SELECT a.*,e.name,e.code,e.locker FROM attendance a JOIN employees e ON e.id=a.employee_id WHERE day=? ORDER BY check_in DESC').bind(day).all();return json({employees,attendance,office:await setting(db,'office'),day});}
   if(path==='/api/admin/settings'&&method==='POST') {const b=await body(req),o=b.office;if(!o||![o.lat,o.lng,o.radius].every(Number.isFinite)||Math.abs(o.lat)>90||Math.abs(o.lng)>180||o.radius<50||o.radius>2000||typeof o.enabled!=='boolean')fail('Enter valid office coordinates and a radius between 50 and 2,000 m.');await set(db,'office',o);return json({ok:true});}

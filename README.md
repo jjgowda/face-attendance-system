@@ -82,3 +82,7 @@ Browser library: `face-api.js` 0.22.2 (MIT), license in `public/vendor/FACE-API-
 Tap **Install app** in the website header. Supported Chromium browsers can show a native install prompt; other browsers show platform-specific instructions (Safari Share → Add to Home Screen on iPhone). The web app opens in standalone mode from the home screen. This is an installable website, not an APK or App Store download. Internet is required to record attendance.
 
 The service worker caches public model files only when first used, plus small icons and an offline information page. API responses, face templates, attendance submissions and admin pages are never cached or queued. Unknown/ambiguous faces do not generate attendance.
+
+## Change the admin password
+
+Sign in at `/admin`, scroll to **Change admin password**, enter the current password, choose and confirm a new password of 12–128 characters, and save. The change revokes all existing admin sessions and signs you out. Sign in again using the new password. Passwords are never returned by the API. Local integration checks verify incorrect-current-password rejection, minimum length, confirmation, previous-session revocation and old/new login behavior.
