@@ -12,24 +12,32 @@ async function admin(req,db) {const token=(req.headers.get('Cookie')||'').match(
 async function makeSession(db) {const token=crypto.randomUUID()+crypto.randomUUID();await db.prepare('INSERT INTO sessions VALUES(?,?)').bind(await hash(token),now()+43200000).run();return `r3_session=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=43200`;}
 function samples(body,n=2) {if(!Array.isArray(body.descriptors)||body.descriptors.length!==n||!body.descriptors.every(validDescriptor))fail('Face capture was incomplete. Please try again.');if(body.descriptors.some(d=>distance(d,body.descriptors[0])>.5))fail('Face samples did not agree. Keep one person in view and retry.');return body.descriptors;}
 async function body(req) {if(Number(req.headers.get('Content-Length'))>32000)fail('Request too large.',413);let raw=await req.text();if(raw.length>32000)fail('Request too large.',413);try{return JSON.parse(raw);}catch{fail('Invalid request.');}}
+
+async function registrationTarget(db,b) {
+ const employee=await db.prepare('SELECT id,name,descriptors,registration_code FROM employees WHERE id=? AND active=1').bind(String(b.employeeId||'')).first();
+ if(!employee)fail('Choose your name from the employee list.');
+ if(JSON.parse(employee.descriptors).length)fail('Your face is already registered. Please use attendance.',409);
+ if(!employee.registration_code || !await equal(String(b.registrationCode||'').trim().toUpperCase(),employee.registration_code))fail('Registration code is incorrect for this employee. Ask your admin for your personal code.',403);
+ return employee;
+}
 async function api(req,env,url) {
  const db=env.DB, path=url.pathname, method=req.method;
  if(method!=='GET' && req.headers.get('Origin') && req.headers.get('Origin')!==url.origin)fail('Invalid request origin.',403);
  const ip=req.headers.get('CF-Connecting-IP')||'local';
  if(path==='/api/config'&&method==='GET') {const office=await setting(db,'office');return json({office,setupRequired:!(await setting(db,'admin')),day:istDay()});}
- if(path==='/api/employees'&&method==='GET') {const {results}=await db.prepare('SELECT id,name,code,locker FROM employees WHERE active=1 ORDER BY name').all();return json({employees:results});}
+ if(path==='/api/employees'&&method==='GET') {const {results}=await db.prepare('SELECT id,name,code,locker,(json_array_length(descriptors)>0) AS registered FROM employees WHERE active=1 ORDER BY name').all();return json({employees:results});}
+ if(path==='/api/register/check'&&method==='POST') {
+  await rate(db,`register-check:${ip}`,20);await registrationTarget(db,await body(req));return json({ok:true});
+ }
  if(path==='/api/register'&&method==='POST') {
-  await rate(db,`register:${ip}`,15);const b=await body(req);
-  const code=await setting(db,'registrationCode');if(!code || !await equal(String(b.registrationCode||'').trim(),code))fail('Registration code is incorrect. Ask your admin for the code.',403);
-  const name=String(b.name||'').trim(), employeeCode=String(b.code||'').trim().toUpperCase();
-  if(name.length<2||name.length>60||!/^[A-Z0-9-]{2,20}$/.test(employeeCode))fail('Enter your name and an employee ID using letters, numbers or hyphens.');
+  await rate(db,`register:${ip}`,15);const b=await body(req),employee=await registrationTarget(db,b);
   if(b.consent!==true)fail('Please agree to face verification for attendance.');const descriptors=samples(b,3);
-  const id=crypto.randomUUID();
-  try {const result=await db.prepare('INSERT INTO employees(id,code,name,descriptors,created_at) SELECT ?,?,?,?,? WHERE (SELECT COUNT(*) FROM employees WHERE active=1)<5').bind(id,employeeCode,name,JSON.stringify(descriptors),new Date().toISOString()).run();if(!result.meta.changes)fail('All five employee places are filled. Contact your admin.');}catch(e){if(String(e.message).includes('UNIQUE'))fail('That employee ID is already registered. Use Check in, or ask your admin to reset your face.');throw e;}
-  return json({message:'Your face is registered. You can now check in.',id},201);
+  const result=await db.prepare('UPDATE employees SET descriptors=?,registration_code=NULL WHERE id=? AND active=1 AND json_array_length(descriptors)=0 AND registration_code=?').bind(JSON.stringify(descriptors),employee.id,employee.registration_code).run();
+  if(!result.meta.changes)fail('Your registration has already been completed. Use attendance.',409);
+  return json({message:'Your face is registered. You can now check in.',id:employee.id},201);
  }
  if(path==='/api/challenge'&&method==='POST') {
-  await rate(db,`challenge:${ip}`,40);const b=await body(req);const employee=await db.prepare('SELECT id FROM employees WHERE id=? AND active=1').bind(String(b.employeeId||'')).first();if(!employee)fail('Choose an employee first.');const id=crypto.randomUUID();await db.prepare('INSERT INTO challenges VALUES(?,?,?)').bind(id,employee.id,now()+120000).run();return json({challenge:id});
+  await rate(db,`challenge:${ip}`,40);const b=await body(req);const employee=await db.prepare('SELECT id FROM employees WHERE id=? AND active=1 AND json_array_length(descriptors)>0').bind(String(b.employeeId||'')).first();if(!employee)fail('Choose an employee first.');const id=crypto.randomUUID();await db.prepare('INSERT INTO challenges VALUES(?,?,?)').bind(id,employee.id,now()+120000).run();return json({challenge:id});
  }
  if(path==='/api/attendance'&&method==='POST') {
   await rate(db,`attendance:${ip}`,40);const b=await body(req);if(!['in','out'].includes(b.action))fail('Choose check in or check out.');const ds=samples(b);
@@ -53,8 +61,21 @@ async function api(req,env,url) {
  if(path.startsWith('/api/admin/')) {
   await admin(req,db);
   if(path==='/api/admin/logout'&&method==='POST') {const token=(req.headers.get('Cookie')||'').match(/(?:^|;\s*)r3_session=([^;]+)/)?.[1];await db.prepare('DELETE FROM sessions WHERE token=?').bind(await hash(token)).run();return json({ok:true},200,{'Set-Cookie':'r3_session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0'});}
-  if(path==='/api/admin/data'&&method==='GET') {const day=url.searchParams.get('day')||istDay();if(!/^\d{4}-\d{2}-\d{2}$/.test(day))fail('Invalid date.');const {results:employees}=await db.prepare('SELECT id,name,code,locker,active,created_at FROM employees ORDER BY name').all();const {results:attendance}=await db.prepare('SELECT a.*,e.name,e.code,e.locker FROM attendance a JOIN employees e ON e.id=a.employee_id WHERE day=? ORDER BY check_in DESC').bind(day).all();return json({employees,attendance,office:await setting(db,'office'),registrationCode:await setting(db,'registrationCode'),day});}
-  if(path==='/api/admin/settings'&&method==='POST') {const b=await body(req),o=b.office;if(!o||![o.lat,o.lng,o.radius].every(Number.isFinite)||Math.abs(o.lat)>90||Math.abs(o.lng)>180||o.radius<50||o.radius>2000||typeof o.enabled!=='boolean')fail('Enter valid office coordinates and a radius between 50 and 2,000 m.');if(typeof b.registrationCode!=='string'||b.registrationCode.trim().length<6||b.registrationCode.length>40)fail('Registration code must have 6–40 characters.');await db.batch([db.prepare("UPDATE settings SET value=? WHERE key='office'").bind(JSON.stringify(o)),db.prepare("UPDATE settings SET value=? WHERE key='registrationCode'").bind(JSON.stringify(b.registrationCode.trim()))]);return json({ok:true});}
+  if(path==='/api/admin/data'&&method==='GET') {const day=url.searchParams.get('day')||istDay();if(!/^\d{4}-\d{2}-\d{2}$/.test(day))fail('Invalid date.');const {results:employees}=await db.prepare('SELECT id,name,code,locker,active,created_at,registration_code,(json_array_length(descriptors)>0) AS registered FROM employees ORDER BY name').all();const {results:attendance}=await db.prepare('SELECT a.*,e.name,e.code,e.locker FROM attendance a JOIN employees e ON e.id=a.employee_id WHERE day=? ORDER BY check_in DESC').bind(day).all();return json({employees,attendance,office:await setting(db,'office'),day});}
+  if(path==='/api/admin/settings'&&method==='POST') {const b=await body(req),o=b.office;if(!o||![o.lat,o.lng,o.radius].every(Number.isFinite)||Math.abs(o.lat)>90||Math.abs(o.lng)>180||o.radius<50||o.radius>2000||typeof o.enabled!=='boolean')fail('Enter valid office coordinates and a radius between 50 and 2,000 m.');await set(db,'office',o);return json({ok:true});}
+  if(path==='/api/admin/add-employee'&&method==='POST') {
+   const b=await body(req),name=String(b.name||'').trim();let code=String(b.code||'').trim().toUpperCase();
+   if(name.length<2||name.length>60)fail('Enter an employee name between 2 and 60 characters.');
+   if(code&&!/^[A-Z0-9-]{2,20}$/.test(code))fail('Employee ID must use 2–20 letters, numbers or hyphens.');
+   const duplicate=await db.prepare('SELECT id FROM employees WHERE lower(name)=lower(?) AND active=1').bind(name).first();if(duplicate)fail('That employee already exists.',409);
+   if(!code){const {results}=await db.prepare('SELECT code FROM employees').all();const taken=new Set(results.map(e=>e.code));for(let i=1;i<=99;i++){const next='R3-'+String(i).padStart(2,'0');if(!taken.has(next)){code=next;break;}}if(!code)fail('Please enter an employee ID.');}
+   const id=crypto.randomUUID(),registrationCode=crypto.randomUUID().slice(0,8).toUpperCase();
+   try{const r=await db.prepare("INSERT INTO employees(id,code,name,descriptors,created_at,registration_code) SELECT ?,?,?,'[]',?,? WHERE (SELECT COUNT(*) FROM employees WHERE active=1)<5").bind(id,code,name,new Date().toISOString(),registrationCode).run();if(!r.meta.changes)fail('All five active employee places are filled.');}catch(e){if(String(e.message).includes('UNIQUE'))fail('That employee ID already exists.',409);throw e;}
+   return json({id,name,code,registrationCode},201);
+  }
+  if(path==='/api/admin/registration-code'&&method==='POST') {
+   const b=await body(req),code=crypto.randomUUID().slice(0,8).toUpperCase();const r=await db.prepare('UPDATE employees SET registration_code=? WHERE id=? AND json_array_length(descriptors)=0').bind(code,String(b.id||'')).run();if(!r.meta.changes)fail('This employee is already registered or unavailable.');return json({registrationCode:code});
+  }
   if(path==='/api/admin/employee'&&method==='POST') {const b=await body(req);if(typeof b.locker!=='string'||b.locker.length>30||typeof b.active!=='boolean')fail('Invalid employee details.');if(b.locker.trim()&&b.active){const other=await db.prepare('SELECT id FROM employees WHERE locker=? AND active=1 AND id<>?').bind(b.locker.trim(),b.id).first();if(other)fail('That locker is assigned to another employee.');}if(b.active){const count=await db.prepare('SELECT COUNT(*) AS n FROM employees WHERE active=1 AND id<>?').bind(b.id).first();if(count.n>=5)fail('Only five active employees are allowed.');}await db.prepare('UPDATE employees SET locker=?,active=? WHERE id=?').bind(b.locker.trim(),b.active?1:0,String(b.id)).run();return json({ok:true});}
   if(path==='/api/admin/delete-employee'&&method==='POST') {const b=await body(req);await db.batch([db.prepare('DELETE FROM attendance WHERE employee_id=?').bind(b.id),db.prepare('DELETE FROM challenges WHERE employee_id=?').bind(b.id),db.prepare('DELETE FROM employees WHERE id=?').bind(b.id)]);return json({ok:true});}
  }
