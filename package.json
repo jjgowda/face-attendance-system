@@ -1,5 +1,16 @@
 {
-  "name": "r3-square-attendance", "version": "1.0.0", "private": true, "type": "module",
-  "scripts": {"dev": "wrangler dev", "deploy": "wrangler deploy", "test": "node --test test/*.test.js", "check": "node --check src/worker.js && node --check public/app.js"},
-  "devDependencies": {"wrangler": "4.164.0"}
+  "name": "r3-square-attendance",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm run build && wrangler dev",
+    "deploy": "npm run build && wrangler deploy",
+    "test": "node --test test/*.test.js",
+    "check": "node --check src/worker.js && node --check public/app.js",
+    "build": "node scripts/build-pages.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "4.164.0"
+  }
 }

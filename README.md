@@ -14,7 +14,8 @@ A blue-and-white mobile website for a team of five. No Python server or always-o
 
 ## Architecture
 
-- `public/`: mobile website, bundled face-api.js and pretrained models.
+- `public/`: generated attendance (`/` and `/attendance`), registration (`/register`) and admin (`/admin`) pages, bundled face-api.js and pretrained models.
+- `src/page.html` and `scripts/build-pages.mjs`: shared page template and static page generator.
 - `src/worker.js`: Cloudflare API, admin sessions, registration, matching and attendance.
 - `src/core.js`: face comparison, geofence validation and IST date calculation.
 - `migrations/`: Cloudflare D1 database schema and initial office configuration.
@@ -24,10 +25,10 @@ Office: **R3 Square Pvt Ltd**, coordinates **13.0942949, 77.5505004**, **500 m**
 
 ## First-time setup
 
-1. Open the deployed website and click **Admin**.
+1. Open **`/admin`** on the deployed website.
 2. Enter the one-time setup code supplied privately by the deployment operator and choose an admin password of at least 12 characters.
 3. Copy the employee registration code from **Office & registration**. Share it privately with the five employees.
-4. Each employee opens the website in Safari or Chrome, chooses **Register your face**, enters their name, a unique employee ID (e.g. `R3-01`) and the registration code, agrees to face-template use, then captures their face.
+4. Each employee opens the website in Safari or Chrome, opens **`/register`**, enters their name, a unique employee ID (e.g. `R3-01`) and the registration code, agrees to face-template use, then captures their face.
 5. Employees use **Mark attendance**, select their name and choose check in or check out. Allow camera and location when prompted.
 6. Assign locker numbers from the admin screen. Locker assignments do not operate physical locks.
 
