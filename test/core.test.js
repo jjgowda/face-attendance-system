@@ -1,0 +1,11 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {validDescriptor,faceMatch,locationCheck,metres,istDay} from '../src/core.js';
+const face=Array(128).fill(.1),other=Array(128).fill(.4),office={enabled:true,lat:13.0942949,lng:77.5505004,radius:500};
+const loc=(overrides={})=>({lat:office.lat,lng:office.lng,accuracy:15,timestamp:Date.now(),...overrides});
+test('face match accepts consistent enrolled samples and rejects another face',()=>{assert.equal(faceMatch([face,face],[face]),true);assert.equal(faceMatch([other,other],[face]),false);assert.equal(faceMatch([face,other],[face]),false);});
+test('malformed and nonfinite face templates are invalid',()=>{assert.equal(validDescriptor([]),false);assert.equal(validDescriptor(Array(128).fill(NaN)),false);assert.equal(validDescriptor(Array(128).fill(3)),false);});
+test('inside office radius accepted, outside rejected',()=>{assert.equal(locationCheck(loc(),office),0);assert.throws(()=>locationCheck(loc({lat:13.11}),office),/within 500/);assert(metres(office.lat,office.lng,13.11,office.lng)>500);});
+test('stale, future, inaccurate and invalid location rejected',()=>{assert.throws(()=>locationCheck(loc({timestamp:Date.now()-121000}),office),/out of date/);assert.throws(()=>locationCheck(loc({timestamp:Date.now()+31000}),office),/out of date/);assert.throws(()=>locationCheck(loc({accuracy:151}),office),/accurate enough/);assert.throws(()=>locationCheck(loc({lat:91}),office),/Invalid location/);assert.throws(()=>locationCheck(null,office),/Allow location/);});
+test('location check can be disabled only by office configuration',()=>assert.equal(locationCheck(null,{enabled:false}),null));
+test('attendance day uses IST across UTC date boundary',()=>{assert.equal(istDay(new Date('2026-11-18T20:00:00Z')),'2026-11-19');assert.equal(istDay(new Date('2026-11-18T01:00:00Z')),'2026-11-18');});

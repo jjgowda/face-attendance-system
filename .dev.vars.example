@@ -1,0 +1,2 @@
+# Local development only. Replace before use. Never commit .dev.vars.
+SETUP_TOKEN=replace-with-a-random-local-setup-code

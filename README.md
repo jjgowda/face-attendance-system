@@ -1,178 +1,77 @@
+# R3 Square — browser face attendance
 
-# 🎯 Face Recognition Attendance System
+A blue-and-white mobile website for a team of five. No Python server or always-on computer is required. The legacy Python implementation is retained in `app.py` and documented in `docs/LEGACY-PYTHON.md`.
 
-A **Python + FastAPI + Supabase** powered attendance system with **real-time face recognition**.  
-Supports **roll number display**, **entry/exit tracking**, CSV exports, and a clean **Admin Dashboard**.
+## Features
 
-Developed by **Jeevan Gowda** 🚀
+- Employee self-registration using an admin-issued registration code and three face samples.
+- Select your name and verify your face to check in or check out.
+- Server-side face-template comparison; biometric templates are never included in employee list responses.
+- Fresh, high-accuracy browser geolocation checked on the server against the office boundary.
+- One check-in and one check-out per employee per IST calendar day; duplicate scans and challenge replays rejected.
+- Password-protected admin dashboard, date-based attendance, CSV export, employee activation, face deletion/reset and locker assignments.
+- Face processing runs in the browser with bundled face-api.js models. Camera frames are not uploaded or stored. Templates are sensitive biometric data and are stored in the private D1 database.
 
----
+## Architecture
 
-## 📸 Features
+- `public/`: mobile website, bundled face-api.js and pretrained models.
+- `src/worker.js`: Cloudflare API, admin sessions, registration, matching and attendance.
+- `src/core.js`: face comparison, geofence validation and IST date calculation.
+- `migrations/`: Cloudflare D1 database schema and initial office configuration.
+- `wrangler.jsonc`: Cloudflare Workers Static Assets + D1 configuration.
 
-- **Face Recognition** using `face_recognition` & OpenCV
-- **Separate Admin Dashboard** (`/`) and **Scanner UI** (`/scan`)
-- **Roll Number Display** (not just UUIDs)
-- **Entry & Exit Times** automatically updated
-- **Supabase Integration** (students table + attendance_daily table)
-- **CSV Export** of daily attendance
-- **Enroll by UUID or Roll Number**
-- **IST Timezone** handling
+Office: **R3 Square Pvt Ltd**, coordinates **13.0942949, 77.5505004**, **500 m** radius, from the owner's Google Maps place link. Admin can change this. Location data must be no more than two minutes old and reported accuracy must be 150 m or better. Attendance stores distance to the office rather than raw location coordinates.
 
----
+## First-time setup
 
-## 🛠️ Tech Stack
+1. Open the deployed website and click **Admin**.
+2. Enter the one-time setup code supplied privately by the deployment operator and choose an admin password of at least 12 characters.
+3. Copy the employee registration code from **Office & registration**. Share it privately with the five employees.
+4. Each employee opens the website in Safari or Chrome, chooses **Register your face**, enters their name, a unique employee ID (e.g. `R3-01`) and the registration code, agrees to face-template use, then captures their face.
+5. Employees use **Mark attendance**, select their name and choose check in or check out. Allow camera and location when prompted.
+6. Assign locker numbers from the admin screen. Locker assignments do not operate physical locks.
 
-- **Backend:** Python 3.10+, FastAPI, Uvicorn
-- **Database:** Supabase (PostgreSQL)
-- **Face Recognition:** [face_recognition](https://github.com/ageitgey/face_recognition), OpenCV
-- **Frontend:** HTML, TailwindCSS (for `/scan`), Vanilla JS
+The setup code stops working once the admin account is created. Admin sessions expire after 12 hours. Keep the admin password and registration code private. Employees can register again after the admin deletes their old registration; deletion also removes that employee's attendance history, with confirmation in the UI.
 
----
+## Run locally
 
-## 📂 Project Structure
+Requires Node.js 22+ and a Cloudflare account for deployment.
 
+```sh
+npm install
+cp .dev.vars.example .dev.vars
+npx wrangler d1 migrations apply r3-square-attendance --local
+npm run dev
 ```
 
-.
-├── app.py               # Main FastAPI app
-├── admin.html           # Admin Dashboard UI
-├── known\_faces/         # Stored known face images (uuid.jpg or roll\_no.jpg)
-├── .env                 # Supabase credentials (not committed to git)
-└── README.md            # Project documentation
+The local D1 database is isolated from production. Camera access works on localhost or HTTPS. Real phone testing needs an HTTPS deployment.
 
-````
+## Deploy to your Cloudflare account
 
----
+This checkout is configured for the owner's existing D1 database. When deploying to a different account, create a new database and update `database_id` in `wrangler.jsonc` first.
 
-## ⚙️ Installation
-
-1️⃣ **Clone the repository**
-```bash
-git clone https://github.com/jjgowda/face-attendance.git
-cd face-attendance
-````
-
-2️⃣ **Create a virtual environment**
-
-```bash
-python -m venv venv
-source venv/bin/activate   # Mac/Linux
-venv\Scripts\activate      # Windows
+```sh
+npx wrangler login
+npx wrangler d1 migrations apply r3-square-attendance --remote
+npx wrangler secret put SETUP_TOKEN
+npm run deploy
 ```
 
-3️⃣ **Install dependencies**
+Use a random setup token; enter it at Wrangler's prompt. Never commit tokens, `.env`, `.dev.vars`, biometric data, or admin access instructions. Static assets, API and D1 are hosted on Cloudflare. There is no paid recognition API. Cloudflare plan quotas still apply.
 
-```bash
-pip install -r requirements.txt
+## Verification
+
+```sh
+npm test
+npm run check
 ```
 
-4️⃣ **Set up `.env` file**
+Core tests cover face matching, invalid templates, office distance, inaccurate/stale/future coordinates, and IST date boundaries. Local API integration was exercised with synthetic templates: setup/login/session protection, registration, face mismatch, geofence, replay prevention, duplicate check-in/out, locker assignment and deletion. Synthetic vector tests establish API behavior, not real-world face recognition accuracy. Test enrollment and attendance on actual employee phones in the office before operational use.
 
-```env
-SUPABASE_URL=your_supabase_url
-SUPABASE_KEY=your_supabase_service_role_key
-```
+## Practical limits
 
-5️⃣ **Run the app**
+This is a cooperative-team attendance MVP, as requested. It performs face matching, not certified liveness detection. Browser-supplied biometric samples and coordinates can be manipulated by a determined user. It does not claim tamper-proof identity verification. Face-match distance is initially 0.5 and should be calibrated with actual employee scans; lighting, camera quality and glasses can affect results. No payroll decisions or automatic physical unlocking are implemented. Overnight shifts and multiple daily sessions are outside this first version.
 
-```bash
-uvicorn app:app --host 0.0.0.0 --port 9999 --reload
-```
+## Third-party assets
 
----
-
-## 🖥️ Usage
-
-* **Admin Dashboard**:
-  Open [http://localhost:9999/](http://localhost:9999/) to view daily attendance & download CSV.
-
-* **Face Scanner**:
-  Open [http://localhost:9999/scan](http://localhost:9999/scan) to scan and recognize faces.
-
-* **Enroll a Face by Roll Number**:
-
-```bash
-curl -X POST "http://localhost:9999/enroll_by_roll?roll_no=10A-001" \
-     -F "file=@face.jpg"
-```
-
-* **Enroll a Face by UUID**:
-
-```bash
-curl -X POST "http://localhost:9999/enroll?student_id=<uuid>" \
-     -F "file=@face.jpg"
-```
-
----
-
-## 📊 Supabase Table Structure
-
-### students
-
-| Column     | Type | Notes               |
-| ---------- | ---- | ------------------- |
-| id         | uuid | Primary key         |
-| roll\_no   | text | Unique roll number  |
-| full\_name | text | Student's full name |
-
-### attendance\_daily
-
-| Column      | Type   | Notes                 |
-| ----------- | ------ | --------------------- |
-| id          | bigint | Primary key           |
-| student\_id | uuid   | FK → students.id      |
-| att\_date   | date   | Attendance date (IST) |
-| entry\_time | time   | First scan of the day |
-| exit\_time  | time   | Last scan of the day  |
-| notes       | text   | Optional remarks      |
-
----
-
-## 📦 Requirements
-
-* Python 3.10 or newer
-* `face_recognition` (requires `dlib` installed)
-* OpenCV
-* FastAPI
-* Supabase Python client
-
-Example `requirements.txt`:
-
-```txt
-fastapi
-uvicorn
-supabase
-python-dotenv
-opencv-python
-face_recognition
-numpy
-```
-
----
-## 📸 Screenshots
-
-### Admin Dashboard
-![Admin Dashboard](/Admin.png)
-
-### Admin Attendance
-![Admin Dashboard](/admin2.png)
-
-### Scan Page
-![Scan Page](/scan.png)
----
-
-## 👨‍💻 Developer
-
-**Jeevan Gowda**
-💼 GitHub: [@jjgowda](https://github.com//jjgowda)
-📧 Email: [cyberxstudios@protonmail.com](mailto:cyberxstudios@protonmail.com)
-
----
-
-## 📜 License
-
-This project is licensed under the MIT License.
-Feel free to use, modify, and distribute with attribution.
-
-
+Browser library: `face-api.js` 0.22.2 (MIT), license in `public/vendor/FACE-API-LICENSE`. Pretrained models are bundled from the upstream [face-api.js repository](https://github.com/justadudewhohacks/face-api.js/tree/master/weights). No third-party CDN is required at runtime.

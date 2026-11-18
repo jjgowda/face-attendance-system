@@ -1,0 +1,8 @@
+node_modules/
+.wrangler/
+.dev.vars
+.env
+*.log
+known_faces/*.jpg
+known_faces/*.jpeg
+known_faces/*.png

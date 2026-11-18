@@ -1,0 +1,69 @@
+import { validDescriptor, distance, faceMatch, locationCheck, istDay } from './core.js';
+const json = (data,status=200,headers={})=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store',...headers}});
+const fail = (message,status=400)=>{throw Object.assign(new Error(message),{status});};
+const now = ()=>Date.now();
+async function setting(db,key,fallback=null) {const row=await db.prepare('SELECT value FROM settings WHERE key=?').bind(key).first();return row?JSON.parse(row.value):fallback;}
+async function set(db,key,value) {await db.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').bind(key,JSON.stringify(value)).run();}
+async function hash(value) {return [...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value)))].map(x=>x.toString(16).padStart(2,'0')).join('');}
+async function passwordHash(password,salt) {const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(password),'PBKDF2',false,['deriveBits']);return [...new Uint8Array(await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',salt:new TextEncoder().encode(salt),iterations:100000},key,256))].map(x=>x.toString(16).padStart(2,'0')).join('');}
+async function equal(a,b) {return await hash(String(a))===await hash(String(b));}
+async function rate(db,key,max) {const bucket=Math.floor(now()/600000); const row=await db.prepare('INSERT INTO rate_limits(key,count,expires) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=count+1 RETURNING count').bind(`${key}:${bucket}`,now()+600000).first();if(row.count>max)fail('Too many attempts. Please try again in 10 minutes.',429);}
+async function admin(req,db) {const token=(req.headers.get('Cookie')||'').match(/(?:^|;\s*)r3_session=([^;]+)/)?.[1];if(!token)fail('Please sign in as admin.',401);const s=await db.prepare('SELECT token FROM sessions WHERE token=? AND expires>?').bind(await hash(token),now()).first();if(!s)fail('Your admin session expired. Please sign in.',401);}
+async function makeSession(db) {const token=crypto.randomUUID()+crypto.randomUUID();await db.prepare('INSERT INTO sessions VALUES(?,?)').bind(await hash(token),now()+43200000).run();return `r3_session=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=43200`;}
+function samples(body,n=2) {if(!Array.isArray(body.descriptors)||body.descriptors.length!==n||!body.descriptors.every(validDescriptor))fail('Face capture was incomplete. Please try again.');if(body.descriptors.some(d=>distance(d,body.descriptors[0])>.5))fail('Face samples did not agree. Keep one person in view and retry.');return body.descriptors;}
+async function body(req) {if(Number(req.headers.get('Content-Length'))>32000)fail('Request too large.',413);let raw=await req.text();if(raw.length>32000)fail('Request too large.',413);try{return JSON.parse(raw);}catch{fail('Invalid request.');}}
+async function api(req,env,url) {
+ const db=env.DB, path=url.pathname, method=req.method;
+ if(method!=='GET' && req.headers.get('Origin') && req.headers.get('Origin')!==url.origin)fail('Invalid request origin.',403);
+ const ip=req.headers.get('CF-Connecting-IP')||'local';
+ if(path==='/api/config'&&method==='GET') {const office=await setting(db,'office');return json({office,setupRequired:!(await setting(db,'admin')),day:istDay()});}
+ if(path==='/api/employees'&&method==='GET') {const {results}=await db.prepare('SELECT id,name,code,locker FROM employees WHERE active=1 ORDER BY name').all();return json({employees:results});}
+ if(path==='/api/register'&&method==='POST') {
+  await rate(db,`register:${ip}`,15);const b=await body(req);
+  const code=await setting(db,'registrationCode');if(!code || !await equal(String(b.registrationCode||'').trim(),code))fail('Registration code is incorrect. Ask your admin for the code.',403);
+  const name=String(b.name||'').trim(), employeeCode=String(b.code||'').trim().toUpperCase();
+  if(name.length<2||name.length>60||!/^[A-Z0-9-]{2,20}$/.test(employeeCode))fail('Enter your name and an employee ID using letters, numbers or hyphens.');
+  if(b.consent!==true)fail('Please agree to face verification for attendance.');const descriptors=samples(b,3);
+  const id=crypto.randomUUID();
+  try {const result=await db.prepare('INSERT INTO employees(id,code,name,descriptors,created_at) SELECT ?,?,?,?,? WHERE (SELECT COUNT(*) FROM employees WHERE active=1)<5').bind(id,employeeCode,name,JSON.stringify(descriptors),new Date().toISOString()).run();if(!result.meta.changes)fail('All five employee places are filled. Contact your admin.');}catch(e){if(String(e.message).includes('UNIQUE'))fail('That employee ID is already registered. Use Check in, or ask your admin to reset your face.');throw e;}
+  return json({message:'Your face is registered. You can now check in.',id},201);
+ }
+ if(path==='/api/challenge'&&method==='POST') {
+  await rate(db,`challenge:${ip}`,40);const b=await body(req);const employee=await db.prepare('SELECT id FROM employees WHERE id=? AND active=1').bind(String(b.employeeId||'')).first();if(!employee)fail('Choose an employee first.');const id=crypto.randomUUID();await db.prepare('INSERT INTO challenges VALUES(?,?,?)').bind(id,employee.id,now()+120000).run();return json({challenge:id});
+ }
+ if(path==='/api/attendance'&&method==='POST') {
+  await rate(db,`attendance:${ip}`,40);const b=await body(req);if(!['in','out'].includes(b.action))fail('Choose check in or check out.');const ds=samples(b);
+  const c=await db.prepare('DELETE FROM challenges WHERE id=? AND expires>? RETURNING employee_id').bind(String(b.challenge||''),now()).first();if(!c)fail('Your scan expired. Please scan again.');
+  const employee=await db.prepare('SELECT * FROM employees WHERE id=? AND active=1').bind(c.employee_id).first();if(!employee)fail('Employee is unavailable. Contact admin.');
+  if(!faceMatch(ds,JSON.parse(employee.descriptors)))fail('Your face did not match. Improve the lighting, face the camera and try again.',403);
+  const office=await setting(db,'office');const d=locationCheck(b.location,office);const day=istDay(),time=new Date().toISOString();
+  if(b.action==='in') {const r=await db.prepare('INSERT INTO attendance(id,employee_id,day,check_in,in_distance) VALUES(?,?,?,?,?) ON CONFLICT(employee_id,day) DO NOTHING').bind(crypto.randomUUID(),employee.id,day,time,d).run();if(!r.meta.changes)fail('You have already checked in today.');}
+  else {const r=await db.prepare('UPDATE attendance SET check_out=?,out_distance=? WHERE employee_id=? AND day=? AND check_out IS NULL AND check_in IS NOT NULL').bind(time,d,employee.id,day).run();if(!r.meta.changes)fail('Check in first, or you have already checked out today.');}
+  return json({message:b.action==='in'?'Checked in successfully':'Checked out successfully',name:employee.name,time,locker:employee.locker,distance:d});
+ }
+ if(path==='/api/admin/setup'&&method==='POST') {
+  await rate(db,`setup:${ip}`,8);const b=await body(req);if(await setting(db,'admin'))fail('Admin is already set up. Please sign in.',409);
+  if(!env.SETUP_TOKEN||!await equal(b.setupCode||'',env.SETUP_TOKEN))fail('Setup code is incorrect.',403);
+  if(typeof b.password!=='string'||b.password.length<12||b.password.length>128)fail('Use an admin password of 12–128 characters.');
+  const salt=crypto.randomUUID(),value={salt,hash:await passwordHash(b.password,salt)};
+  const r=await db.prepare("INSERT OR IGNORE INTO settings(key,value) VALUES('admin',?)").bind(JSON.stringify(value)).run();if(!r.meta.changes)fail('Admin is already set up.',409);
+  await set(db,'registrationCode',crypto.randomUUID().slice(0,8).toUpperCase());return json({ok:true},200,{'Set-Cookie':await makeSession(db)});
+ }
+ if(path==='/api/admin/login'&&method==='POST') {await rate(db,`login:${ip}`,8);const b=await body(req),a=await setting(db,'admin');if(!a||typeof b.password!=='string'||b.password.length>128||!await equal(await passwordHash(b.password,a.salt),a.hash))fail('Password is incorrect.',401);return json({ok:true},200,{'Set-Cookie':await makeSession(db)});}
+ if(path.startsWith('/api/admin/')) {
+  await admin(req,db);
+  if(path==='/api/admin/logout'&&method==='POST') {const token=(req.headers.get('Cookie')||'').match(/(?:^|;\s*)r3_session=([^;]+)/)?.[1];await db.prepare('DELETE FROM sessions WHERE token=?').bind(await hash(token)).run();return json({ok:true},200,{'Set-Cookie':'r3_session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0'});}
+  if(path==='/api/admin/data'&&method==='GET') {const day=url.searchParams.get('day')||istDay();if(!/^\d{4}-\d{2}-\d{2}$/.test(day))fail('Invalid date.');const {results:employees}=await db.prepare('SELECT id,name,code,locker,active,created_at FROM employees ORDER BY name').all();const {results:attendance}=await db.prepare('SELECT a.*,e.name,e.code,e.locker FROM attendance a JOIN employees e ON e.id=a.employee_id WHERE day=? ORDER BY check_in DESC').bind(day).all();return json({employees,attendance,office:await setting(db,'office'),registrationCode:await setting(db,'registrationCode'),day});}
+  if(path==='/api/admin/settings'&&method==='POST') {const b=await body(req),o=b.office;if(!o||![o.lat,o.lng,o.radius].every(Number.isFinite)||Math.abs(o.lat)>90||Math.abs(o.lng)>180||o.radius<50||o.radius>2000||typeof o.enabled!=='boolean')fail('Enter valid office coordinates and a radius between 50 and 2,000 m.');if(typeof b.registrationCode!=='string'||b.registrationCode.trim().length<6||b.registrationCode.length>40)fail('Registration code must have 6–40 characters.');await db.batch([db.prepare("UPDATE settings SET value=? WHERE key='office'").bind(JSON.stringify(o)),db.prepare("UPDATE settings SET value=? WHERE key='registrationCode'").bind(JSON.stringify(b.registrationCode.trim()))]);return json({ok:true});}
+  if(path==='/api/admin/employee'&&method==='POST') {const b=await body(req);if(typeof b.locker!=='string'||b.locker.length>30||typeof b.active!=='boolean')fail('Invalid employee details.');if(b.locker.trim()&&b.active){const other=await db.prepare('SELECT id FROM employees WHERE locker=? AND active=1 AND id<>?').bind(b.locker.trim(),b.id).first();if(other)fail('That locker is assigned to another employee.');}if(b.active){const count=await db.prepare('SELECT COUNT(*) AS n FROM employees WHERE active=1 AND id<>?').bind(b.id).first();if(count.n>=5)fail('Only five active employees are allowed.');}await db.prepare('UPDATE employees SET locker=?,active=? WHERE id=?').bind(b.locker.trim(),b.active?1:0,String(b.id)).run();return json({ok:true});}
+  if(path==='/api/admin/delete-employee'&&method==='POST') {const b=await body(req);await db.batch([db.prepare('DELETE FROM attendance WHERE employee_id=?').bind(b.id),db.prepare('DELETE FROM challenges WHERE employee_id=?').bind(b.id),db.prepare('DELETE FROM employees WHERE id=?').bind(b.id)]);return json({ok:true});}
+ }
+ return json({error:'Not found'},404);
+}
+export default {
+ async fetch(req,env) {const url=new URL(req.url);let response;
+ try{response=url.pathname.startsWith('/api/')?await api(req,env,url):await env.ASSETS.fetch(req);}catch(e){if(!e.status&&!/Allow location|Location is|location is|Your location|You are|Invalid location/.test(e.message))console.error('Request failed',e.message);response=json({error:e.status||/location|Location|You are/.test(e.message)?e.message:'Something went wrong. Please try again.'},e.status||(/location|Location|You are/.test(e.message)?400:500));}
+ const headers=new Headers(response.headers);headers.set('X-Content-Type-Options','nosniff');headers.set('Referrer-Policy','same-origin');headers.set('Permissions-Policy','camera=(self), geolocation=(self), microphone=()');headers.set('X-Frame-Options','DENY');headers.set('Content-Security-Policy',"default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");return new Response(response.body,{status:response.status,headers});
+ },
+ async scheduled(event,env) {await env.DB.batch([env.DB.prepare('DELETE FROM challenges WHERE expires<?').bind(now()),env.DB.prepare('DELETE FROM sessions WHERE expires<?').bind(now()),env.DB.prepare('DELETE FROM rate_limits WHERE expires<?').bind(now())]);}
+};
