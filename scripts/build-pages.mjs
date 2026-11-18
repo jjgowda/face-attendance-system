@@ -1,9 +1,9 @@
 import {readFile,writeFile} from 'node:fs/promises';
 const template=await readFile(new URL('../src/page.html',import.meta.url),'utf8');
 const pages=[
- {file:'index.html',page:'attendance',title:'Attendance',badge:'Attendance',heading:'Team attendance',description:'A quick face scan. Then you’re ready to go.'},
- {file:'attendance.html',page:'attendance',title:'Attendance',badge:'Attendance',heading:'Team attendance',description:'A quick face scan. Then you’re ready to go.'},
- {file:'register.html',page:'register',title:'Register your face',badge:'Registration',heading:'Welcome to the team',description:'Register once. Check in with your face every day.'},
+ {file:'index.html',page:'attendance',title:'Attendance',badge:'Attendance',heading:'Attendance',description:'Record your check-in or check-out.'},
+ {file:'attendance.html',page:'attendance',title:'Attendance',badge:'Attendance',heading:'Attendance',description:'Record your check-in or check-out.'},
+ {file:'register.html',page:'register',title:'Register your face',badge:'Registration',heading:'Face registration',description:'Set up face verification for your attendance.'},
  {file:'admin.html',page:'admin',title:'Admin',badge:'Admin',heading:'',description:''}
 ];
 for(const config of pages){
