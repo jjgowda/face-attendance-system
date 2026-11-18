@@ -20,21 +20,31 @@ async function models() {
  if(!state.models)state.models=Promise.all([faceapi.nets.tinyFaceDetector.loadFromUri('/models'),faceapi.nets.faceLandmark68TinyNet.loadFromUri('/models'),faceapi.nets.faceRecognitionNet.loadFromUri('/models')]).catch(()=>{state.models=null;throw Error('Face models could not load. Check your connection and retry.');});
  return state.models;
 }
+async function showPermissions() {
+ try {
+  const checks=await Promise.all([navigator.permissions.query({name:'camera'}),navigator.permissions.query({name:'geolocation'})]);
+  if(checks[0].state==='granted' && (!state.config.office.enabled || checks[1].state==='granted'))return;
+ }catch{}
+ if(!$('#permissionDialog').open)$('#permissionDialog').showModal();
+}
 async function preparePermissions() {
  if(state.permissionBusy)return state.permissionPromise;
  state.permissionBusy=true;
  state.permissionPromise=(async()=>{
-  const notice=$('#permissionNotice'),label=$('#permissionText'),button=$('#enablePermissions');
-  notice.hidden=false;label.textContent='Allow camera and location access when your browser asks.';button.hidden=true;notice.setAttribute('aria-busy','true');
+  const dialog=$('#permissionDialog'),label=$('#permissionText'),button=$('#enablePermissions');
+  label.textContent='Choose Allow when your browser asks for camera and location access.';
+  button.disabled=true;button.textContent='Requesting access…';button.classList.add('is-loading');dialog.setAttribute('aria-busy','true');
   const errors=[];
-  try{if(!navigator.mediaDevices?.getUserMedia)throw Error();const stream=await navigator.mediaDevices.getUserMedia({video:true,audio:false});stream.getTracks().forEach(t=>t.stop());}catch{errors.push('camera');}
-  if(state.config.office.enabled){try{await location();}catch{errors.push('location');}}
-  notice.removeAttribute('aria-busy');state.permissionBusy=false;
-  if(errors.length){label.textContent='Allow '+errors.join(' and ')+' access to mark attendance. You can enable it in your browser settings.';button.hidden=false;}else notice.hidden=true;
+  try{if(!navigator.mediaDevices?.getUserMedia)throw Error('Use Safari or Chrome over HTTPS to allow camera access.');const stream=await navigator.mediaDevices.getUserMedia({video:true,audio:false});stream.getTracks().forEach(t=>t.stop());}catch(e){errors.push(cameraError(e));}
+  if(state.config.office.enabled){try{await location();}catch(e){errors.push(e.message);}}
+  dialog.removeAttribute('aria-busy');state.permissionBusy=false;button.disabled=false;button.classList.remove('is-loading');
+  if(errors.length){label.textContent=errors.join(' ');button.textContent='Try again';}else{button.textContent='Enable camera & location';if(dialog.open)dialog.close();}
  })();
  return state.permissionPromise;
 }
 $('#enablePermissions').onclick=()=>void preparePermissions();
+$('#closePermissions').onclick=()=>$('#permissionDialog').close();
+$('#skipPermissions').onclick=()=>$('#permissionDialog').close();
 function stopCamera(){state.generation++;state.stream?.getTracks().forEach(t=>t.stop());state.stream=null;$('#video').srcObject=null;}
 $('#closeCamera').onclick=()=>$('#cameraDialog').close();$('#cameraDialog').addEventListener('close',stopCamera);
 async function openCamera(mode,onCapture) {
@@ -90,7 +100,7 @@ $('#settingsForm').onsubmit=async e=>{e.preventDefault();const button=$('#settin
 $('#adminLogout').onclick=async()=>{try{await api('admin/logout',{});await openAdmin();}catch(e){alert(e.message);}};
 $('#exportCsv').onclick=()=>{const cell=v=>'"'+String(v??'').replace(/^[=+@-]/,"'$&").replaceAll('"','""')+'"';const rows=[['Employee ID','Name','Date (IST)','Check in (IST)','Check out (IST)','Locker'],...state.admin.attendance.map(a=>[a.code,a.name,a.day,time(a.check_in),time(a.check_out),a.locker])];const blob=new Blob(['\ufeff'+rows.map(r=>r.map(cell).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`R3-Square-attendance-${state.admin.day}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
 $('#today').textContent=new Date().toLocaleDateString('en-IN',{timeZone:'Asia/Kolkata',weekday:'long',day:'numeric',month:'short',year:'numeric'});
-async function init(){try{state.config=await api('config');if(page!=='admin')void preparePermissions();await loadEmployees();if(window.location.hash==='#admin'){window.location.replace('/admin');return;}if(page==='admin')await openAdmin();else if(new URLSearchParams(window.location.search).has('registered'))message('Your face is registered. You can now check in.');}catch(e){message(e.message,true);$('#employee').replaceChildren(new Option('Could not load team — refresh to retry',''));}}
+async function init(){try{state.config=await api('config');if(page!=='admin')void showPermissions();await loadEmployees();if(window.location.hash==='#admin'){window.location.replace('/admin');return;}if(page==='admin')await openAdmin();else if(new URLSearchParams(window.location.search).has('registered'))message('Your face is registered. You can now check in.');}catch(e){message(e.message,true);$('#employee').replaceChildren(new Option('Could not load team — refresh to retry',''));}}
 // Keep each action responsive while its camera or network request is starting.
 for (const [id,label] of [['attendanceForm','Opening camera…'],['registerForm','Opening camera…'],['adminAuth','Signing in…'],['settingsForm','Saving…']]) {
  const form=$('#'+id),submit=form.onsubmit;
