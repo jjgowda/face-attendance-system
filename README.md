@@ -5,7 +5,7 @@ A blue-and-white mobile website for a team of five. No Python server or always-o
 ## Features
 
 - Admin-managed employee roster with a personal, one-time registration code for each employee and three face samples at enrollment.
-- Select your name and check in or check out; the camera automatically detects and verifies your face.
+- Choose check in or check out; the camera identifies the employee automatically from the registered face.
 - Server-side face-template comparison; biometric templates are never included in employee list responses.
 - Fresh, high-accuracy browser geolocation checked on the server against the office boundary.
 - One check-in and one check-out per employee per IST calendar day; duplicate scans and challenge replays rejected.
@@ -29,7 +29,7 @@ Office: **R3 Square Pvt Ltd**, coordinates **13.0942949, 77.5505004**, **500 m**
 2. Enter the one-time setup code supplied privately by the deployment operator and choose an admin password of at least 12 characters.
 3. Add employees under **Employees & lockers**. Each pending employee receives a personal registration code; share it privately with that employee.
 4. Each employee opens **`/register`** in Safari or Chrome, selects their name, enters their personal registration code, agrees to face-template use, and their face is captured automatically. The code is consumed on successful enrollment; existing face registrations cannot be overwritten using a code.
-5. Employees use **Mark attendance**, select their name and choose check in or check out. Camera and location permissions are requested when employee pages open; browsers may require an explicit tap if they block automatic prompts. The camera used for the initial permission check is stopped immediately. Face models load only when a scan starts.
+5. Employees open **Attendance** and choose check in or check out. No name selection is needed: the backend identifies the employee against active enrolled face templates, rejecting unknown or ambiguous matches. Camera and location permissions are requested when employee pages open; browsers may require an explicit tap if they block automatic prompts. The camera used for the initial permission check is stopped immediately. Face models load only when a scan starts.
 6. Assign locker numbers from the admin screen. Locker assignments do not operate physical locks.
 
 The setup code stops working once the admin account is created. Admin sessions expire after 12 hours. Keep the admin password and personal registration codes private. Employees can register again after the admin deletes their old registration; deletion also removes that employee's attendance history, with confirmation in the UI.
@@ -76,3 +76,9 @@ This is a cooperative-team attendance MVP, as requested. It performs face matchi
 ## Third-party assets
 
 Browser library: `face-api.js` 0.22.2 (MIT), license in `public/vendor/FACE-API-LICENSE`. Pretrained models are bundled from the upstream [face-api.js repository](https://github.com/justadudewhohacks/face-api.js/tree/master/weights). No third-party CDN is required at runtime.
+
+## Install on a phone
+
+Tap **Install app** in the website header. Supported Chromium browsers can show a native install prompt; other browsers show platform-specific instructions (Safari Share → Add to Home Screen on iPhone). The web app opens in standalone mode from the home screen. This is an installable website, not an APK or App Store download. Internet is required to record attendance.
+
+The service worker caches public model files only when first used, plus small icons and an offline information page. API responses, face templates, attendance submissions and admin pages are never cached or queued. Unknown/ambiguous faces do not generate attendance.

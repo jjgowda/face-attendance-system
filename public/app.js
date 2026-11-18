@@ -8,13 +8,10 @@ const time = value=>value?new Date(value).toLocaleTimeString('en-IN',{timeZone:'
 const message = (text,error=false)=>{const el=$('#notice');el.hidden=false;el.textContent=text;el.classList.toggle('error',error);};
 async function api(path,data) {requestLoading(true);try{const r=await fetch('/api/'+path,{method:data===undefined?'GET':'POST',headers:data===undefined?{}:{'Content-Type':'application/json'},body:data===undefined?undefined:JSON.stringify(data)});let b;try{b=await r.json();}catch{throw Error('Unable to reach the attendance service. Please retry.');}if(!r.ok)throw Object.assign(Error(b.error||'Request failed.'),{status:r.status});return b;}finally{requestLoading(false);}}
 async function loadEmployees() {
- const field=$('#employee'),register=$('#registerEmployee');field.disabled=true;register.disabled=true;field.setAttribute('aria-busy','true');
- try{const b=await api('employees');state.employees=b.employees;const enrolled=b.employees.filter(e=>e.registered),selected=field.value||localStorage.getItem('r3-employee');
- field.replaceChildren(new Option(enrolled.length?'Choose your name':'Register your face first',''));
- for(const e of enrolled)field.add(new Option(e.name,e.id));if(enrolled.some(e=>e.id===selected))field.value=selected;
- register.replaceChildren(new Option('Choose your name',''));
+ const register=$('#registerEmployee');register.disabled=true;
+ try{const b=await api('employees');state.employees=b.employees;register.replaceChildren(new Option('Choose your name',''));
  for(const e of b.employees){const option=new Option(e.name+(e.registered?' — Already registered':''),e.id);option.disabled=!!e.registered;register.add(option);}
- }finally{field.disabled=false;register.disabled=false;field.setAttribute('aria-busy','false');}
+ }finally{register.disabled=false;}
 }
 function tab(register) {$('#attendanceForm').hidden=register;$('#registerForm').hidden=!register;$('#attendanceTab').classList.toggle('active',!register);$('#registerTab').classList.toggle('active',register);$('#attendanceTab').setAttribute('aria-selected',String(!register));$('#registerTab').setAttribute('aria-selected',String(register));$('#notice').hidden=true;}
 $('#attendanceTab').onclick=()=>tab(false);$('#registerTab').onclick=()=>tab(true);
@@ -91,7 +88,7 @@ async function automaticScan(mode,onCapture,generation) {
  }catch(e){if(active()){$('#cameraStatus').textContent=e.message;$('#cameraDialog').dataset.scanning='false';stopCamera();}}
 }
 async function location() {if(!state.config.office.enabled)return null;if(!navigator.geolocation)throw Error('This browser does not support location. Use Safari or Chrome.');return new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(p=>resolve({lat:p.coords.latitude,lng:p.coords.longitude,accuracy:p.coords.accuracy,timestamp:p.timestamp}),e=>reject(Error(e.code===1?'Location access was denied. Allow location in browser settings and retry.':'Could not get an accurate location. Move near a window and retry.')),{enableHighAccuracy:true,maximumAge:0,timeout:20000}));}
-$('#attendanceForm').onsubmit=async e=>{e.preventDefault();const employeeId=$('#employee').value,action=$('input[name=action]:checked').value;if(!employeeId)return;localStorage.setItem('r3-employee',employeeId);await openCamera('verify',async(descriptors,active)=>{const loc=await location();if(!active())return;$('#cameraStatus').textContent='Verifying your face…';const {challenge}=await api('challenge',{employeeId});if(!active())return;const result=await api('attendance',{descriptors,challenge,action,location:loc});message(`${result.message}, ${result.name}.\n${time(result.time)} IST${result.locker?' · Locker '+result.locker:''}${result.distance!==null?' · '+result.distance+' m from office':''}`);});};
+$('#attendanceForm').onsubmit=async e=>{e.preventDefault();const action=$('input[name=action]:checked').value;await openCamera('verify',async(descriptors,active)=>{const loc=await location();if(!active())return;$('#cameraStatus').textContent='Identifying your face…';const {challenge}=await api('challenge',{});if(!active())return;const result=await api('attendance',{descriptors,challenge,action,location:loc});message(`${result.message}, ${result.name}.\n${time(result.time)} IST${result.locker?' · Locker '+result.locker:''}`);});};
 $('#registerForm').onsubmit=async e=>{
  e.preventDefault();const details={employeeId:$('#registerEmployee').value,registrationCode:$('#registrationCode').value.trim(),consent:$('#consent').checked};
  try{await api('register/check',details);}catch(error){message(error.message,true);return;}
@@ -113,7 +110,7 @@ $('#settingsForm').onsubmit=async e=>{e.preventDefault();const button=$('#settin
 $('#adminLogout').onclick=async()=>{try{await api('admin/logout',{});await openAdmin();}catch(e){alert(e.message);}};
 $('#exportCsv').onclick=()=>{const cell=v=>'"'+String(v??'').replace(/^[=+@-]/,"'$&").replaceAll('"','""')+'"';const rows=[['Employee ID','Name','Date (IST)','Check in (IST)','Check out (IST)','Locker'],...state.admin.attendance.map(a=>[a.code,a.name,a.day,time(a.check_in),time(a.check_out),a.locker])];const blob=new Blob(['\ufeff'+rows.map(r=>r.map(cell).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`R3-Square-attendance-${state.admin.day}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
 $('#today').textContent=new Date().toLocaleDateString('en-IN',{timeZone:'Asia/Kolkata',weekday:'long',day:'numeric',month:'short',year:'numeric'});
-async function init(){try{state.config=await api('config');if(page!=='admin')void showPermissions();await loadEmployees();if(window.location.hash==='#admin'){window.location.replace('/admin');return;}if(page==='admin')await openAdmin();else if(new URLSearchParams(window.location.search).has('registered'))message('Your face is registered. You can now check in.');}catch(e){message(e.message,true);$('#employee').replaceChildren(new Option('Could not load team — refresh to retry',''));}}
+async function init(){try{state.config=await api('config');if(page!=='admin')void showPermissions();if(page!=='attendance')await loadEmployees();if(window.location.hash==='#admin'){window.location.replace('/admin');return;}if(page==='admin')await openAdmin();else if(new URLSearchParams(window.location.search).has('registered'))message('Your face is registered. You can now check in.');}catch(e){message(e.message,true);$('#registerEmployee').replaceChildren(new Option('Could not load team — refresh to retry',''));}}
 // Keep each action responsive while its camera or network request is starting.
 for (const [id,label] of [['attendanceForm','Opening camera…'],['registerForm','Checking registration code…'],['adminAuth','Signing in…'],['settingsForm','Saving…'],['addEmployeeForm','Adding employee…']]) {
  const form=$('#'+id),submit=form.onsubmit;

@@ -1,4 +1,4 @@
-import { validDescriptor, distance, faceMatch, locationCheck, istDay } from './core.js';
+import { validDescriptor, distance, faceMatch, identifyFace, locationCheck, istDay } from './core.js';
 const json = (data,status=200,headers={})=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store',...headers}});
 const fail = (message,status=400)=>{throw Object.assign(new Error(message),{status});};
 const now = ()=>Date.now();
@@ -37,13 +37,23 @@ async function api(req,env,url) {
   return json({message:'Your face is registered. You can now check in.',id:employee.id},201);
  }
  if(path==='/api/challenge'&&method==='POST') {
-  await rate(db,`challenge:${ip}`,40);const b=await body(req);const employee=await db.prepare('SELECT id FROM employees WHERE id=? AND active=1 AND json_array_length(descriptors)>0').bind(String(b.employeeId||'')).first();if(!employee)fail('Choose an employee first.');const id=crypto.randomUUID();await db.prepare('INSERT INTO challenges VALUES(?,?,?)').bind(id,employee.id,now()+120000).run();return json({challenge:id});
+  await rate(db,`challenge:${ip}`,40);const b=await body(req);let employeeId='*';
+  if(b.employeeId){const employee=await db.prepare('SELECT id FROM employees WHERE id=? AND active=1 AND json_array_length(descriptors)>0').bind(String(b.employeeId)).first();if(!employee)fail('This employee is not registered.');employeeId=employee.id;}
+  else{const enrolled=await db.prepare('SELECT id FROM employees WHERE active=1 AND json_array_length(descriptors)>0 LIMIT 1').first();if(!enrolled)fail('No faces are registered yet. Please register first.');}
+  const id=crypto.randomUUID();await db.prepare('INSERT INTO challenges VALUES(?,?,?)').bind(id,employeeId,now()+120000).run();return json({challenge:id});
  }
  if(path==='/api/attendance'&&method==='POST') {
   await rate(db,`attendance:${ip}`,40);const b=await body(req);if(!['in','out'].includes(b.action))fail('Choose check in or check out.');const ds=samples(b);
   const c=await db.prepare('DELETE FROM challenges WHERE id=? AND expires>? RETURNING employee_id').bind(String(b.challenge||''),now()).first();if(!c)fail('Your scan expired. Please scan again.');
-  const employee=await db.prepare('SELECT * FROM employees WHERE id=? AND active=1').bind(c.employee_id).first();if(!employee)fail('Employee is unavailable. Contact admin.');
-  if(!faceMatch(ds,JSON.parse(employee.descriptors)))fail('Your face did not match. Improve the lighting, face the camera and try again.',403);
+  let employee;
+  if(c.employee_id==='*'){
+   const {results}=await db.prepare('SELECT * FROM employees WHERE active=1 AND json_array_length(descriptors)>0').all();
+   employee=identifyFace(ds,results.map(e=>({...e,templates:JSON.parse(e.descriptors)})));
+   if(!employee)fail('Could not identify your face clearly. Face the camera in good light and try again. If you are new, register first.',403);
+  }else{
+   employee=await db.prepare('SELECT * FROM employees WHERE id=? AND active=1').bind(c.employee_id).first();if(!employee)fail('Employee is unavailable. Contact admin.');
+   if(!faceMatch(ds,JSON.parse(employee.descriptors)))fail('Your face did not match. Improve the lighting and try again.',403);
+  }
   const office=await setting(db,'office');const d=locationCheck(b.location,office);const day=istDay(),time=new Date().toISOString();
   if(b.action==='in') {const r=await db.prepare('INSERT INTO attendance(id,employee_id,day,check_in,in_distance) VALUES(?,?,?,?,?) ON CONFLICT(employee_id,day) DO NOTHING').bind(crypto.randomUUID(),employee.id,day,time,d).run();if(!r.meta.changes)fail('You have already checked in today.');}
   else {const r=await db.prepare('UPDATE attendance SET check_out=?,out_distance=? WHERE employee_id=? AND day=? AND check_out IS NULL AND check_in IS NOT NULL').bind(time,d,employee.id,day).run();if(!r.meta.changes)fail('Check in first, or you have already checked out today.');}
