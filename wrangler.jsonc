@@ -19,10 +19,21 @@
   ],
   "triggers": {
     "crons": [
-      "0 0 * * *"
+      "0 0 * * *",
+      "30 6 * * *",
+      "30 14 * * *"
     ]
   },
   "build": {
     "command": "node scripts/build-pages.mjs"
-  }
+  },
+  "send_email": [
+    {
+      "name": "REPORT_EMAIL",
+      "allowed_destination_addresses": [
+        "senthil@r3square.com",
+        "jeevan@r3square.com"
+      ]
+    }
+  ]
 }

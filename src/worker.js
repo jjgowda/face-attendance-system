@@ -1,3 +1,5 @@
+import {sendDailyReport,REPORT_RECIPIENTS,reportSlot} from './report-email.js';
+import {validReportDay,monthRange,dailyReport,monthlyReport} from './reports.js';
 import { validDescriptor, distance, faceMatch, identifyFace, locationCheck, istDay } from './core.js';
 const json = (data,status=200,headers={})=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store',...headers}});
 const fail = (message,status=400)=>{throw Object.assign(new Error(message),{status});};
@@ -82,6 +84,15 @@ async function api(req,env,url) {
    return json({ok:true},200,{'Set-Cookie':'r3_session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0'});
   }
   if(path==='/api/admin/logout'&&method==='POST') {const token=(req.headers.get('Cookie')||'').match(/(?:^|;\s*)r3_session=([^;]+)/)?.[1];await db.prepare('DELETE FROM sessions WHERE token=?').bind(await hash(token)).run();return json({ok:true},200,{'Set-Cookie':'r3_session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0'});}
+  if(path==='/api/admin/email-status'&&method==='GET') {const {results:recent}=await db.prepare('SELECT report_day,slot,status,attempted_at,accepted_at,error FROM report_email_log ORDER BY attempted_at DESC LIMIT 5').all();return json({ready:!!(env.REPORT_SENDER&&env.REPORT_EMAIL),recipients:REPORT_RECIPIENTS,times:['12:00 PM','8:00 PM'],timezone:'Asia/Kolkata',recent});}
+  if(path==='/api/admin/send-report'&&method==='POST') {await rate(db,`email-report:${ip}`,3);const result=await sendDailyReport(env,{slot:'On demand',manual:true});return json(result,result.ok?200:result.pending?503:502);}
+  if(path==='/api/admin/reports'&&method==='GET') {
+   const mode=url.searchParams.get('mode')||'daily',today=istDay();
+   const {results:employees}=await db.prepare('SELECT id,name,code,active,created_at,(json_array_length(descriptors)>0) AS registered FROM employees ORDER BY name').all();
+   if(mode==='daily'){const day=url.searchParams.get('date')||today;if(!validReportDay(day))fail('Choose a valid report date.');const {results}=await db.prepare('SELECT employee_id,day,check_in,check_out FROM attendance WHERE day=?').bind(day).all();return json(dailyReport(employees,results,day,today));}
+   if(mode==='monthly'){const month=url.searchParams.get('month')||today.slice(0,7),id=url.searchParams.get('employee')||'';let range;try{range=monthRange(month);}catch{fail('Choose a valid report month.');}if(id&&!employees.some(e=>e.id===id))fail('Employee not found.',404);const {results}=await db.prepare('SELECT employee_id,day,check_in,check_out FROM attendance WHERE day>=? AND day<? ORDER BY day').bind(range.start,range.end).all();return json(monthlyReport(employees,results,month,today,id));}
+   fail('Choose daily or monthly reports.');
+  }
   if(path==='/api/admin/data'&&method==='GET') {const day=url.searchParams.get('day')||istDay();if(!/^\d{4}-\d{2}-\d{2}$/.test(day))fail('Invalid date.');const {results:employees}=await db.prepare('SELECT id,name,code,locker,active,created_at,registration_code,(json_array_length(descriptors)>0) AS registered FROM employees ORDER BY name').all();const {results:attendance}=await db.prepare('SELECT a.*,e.name,e.code,e.locker FROM attendance a JOIN employees e ON e.id=a.employee_id WHERE day=? ORDER BY check_in DESC').bind(day).all();return json({employees,attendance,office:await setting(db,'office'),day});}
   if(path==='/api/admin/settings'&&method==='POST') {const b=await body(req),o=b.office;if(!o||![o.lat,o.lng,o.radius].every(Number.isFinite)||Math.abs(o.lat)>90||Math.abs(o.lng)>180||o.radius<50||o.radius>2000||typeof o.enabled!=='boolean')fail('Enter valid office coordinates and a radius between 50 and 2,000 m.');await set(db,'office',o);return json({ok:true});}
   if(path==='/api/admin/add-employee'&&method==='POST') {
@@ -107,5 +118,5 @@ export default {
  try{response=url.pathname.startsWith('/api/')?await api(req,env,url):await env.ASSETS.fetch(req);}catch(e){if(!e.status&&!/Allow location|Location is|location is|Your location|You are|Invalid location/.test(e.message))console.error('Request failed',e.message);response=json({error:e.status||/location|Location|You are/.test(e.message)?e.message:'Something went wrong. Please try again.'},e.status||(/location|Location|You are/.test(e.message)?400:500));}
  const headers=new Headers(response.headers);headers.set('X-Content-Type-Options','nosniff');headers.set('Referrer-Policy','same-origin');headers.set('Permissions-Policy','camera=(self), geolocation=(self), microphone=()');headers.set('X-Frame-Options','DENY');headers.set('Content-Security-Policy',"default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");return new Response(response.body,{status:response.status,headers});
  },
- async scheduled(event,env) {await env.DB.batch([env.DB.prepare('DELETE FROM challenges WHERE expires<?').bind(now()),env.DB.prepare('DELETE FROM sessions WHERE expires<?').bind(now()),env.DB.prepare('DELETE FROM rate_limits WHERE expires<?').bind(now())]);}
+ async scheduled(event,env) {const slot=reportSlot(event.cron);if(slot){const result=await sendDailyReport(env,{slot,scheduledTime:event.scheduledTime});if(!result.ok)console.error('Scheduled report email:',result.message);return;}await env.DB.batch([env.DB.prepare('DELETE FROM challenges WHERE expires<?').bind(now()),env.DB.prepare('DELETE FROM sessions WHERE expires<?').bind(now()),env.DB.prepare('DELETE FROM rate_limits WHERE expires<?').bind(now())]);}
 };

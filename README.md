@@ -86,3 +86,15 @@ The service worker caches public model files only when first used, plus small ic
 ## Change the admin password
 
 Sign in at `/admin`, scroll to **Change admin password**, enter the current password, choose and confirm a new password of 12–128 characters, and save. The change revokes all existing admin sessions and signs you out. Sign in again using the new password. Passwords are never returned by the API. Local integration checks verify incorrect-current-password rejection, minimum length, confirmation, previous-session revocation and old/new login behavior.
+
+## Admin reports and mobile navigation
+
+Admin now opens in **Reports**, with separate **Employees** and **Settings** sections. Employee controls are collapsed in expandable cards; Add employee is opened explicitly. Daily reports include every eligible employee, scan status, in/out times and completed hours. Monthly reports include an all-employee overview and individual calendars/day-by-day histories. Both views support CSV export and printing. Times are IST; open/missing checkouts are excluded from completed-hour totals. No scan is labelled **No check-in**, not absence. Work schedules, holidays and leave policies are not inferred. Dates before an employee's roster entry and future dates are distinct.
+
+The report endpoints require admin authentication. Reports load only on admin pages. Local tests cover date/month validation, leap years, completed/overnight durations, missing checkout, roster boundaries, inactive historical records and recipient-safe email rendering.
+
+## Scheduled report emails
+
+The requested recipient allowlist is `senthil@r3square.com` and `jeevan@r3square.com`. Cloudflare cron expressions `30 6 * * *` and `30 14 * * *` correspond to **12 noon and 8 PM Asia/Kolkata**. Each email is a same-day snapshot as of that send time and includes an HTML table plus CSV. It never includes face templates or registration codes. `report_email_log` prevents duplicate sends for the same scheduled slot and records provider acceptance/failures. Provider acceptance is not proof of inbox delivery.
+
+The `REPORT_EMAIL` binding is configured, but delivery remains inactive until a sender domain is onboarded and `REPORT_SENDER` is configured. Sender-subdomain setup was approved by the owner, but the currently connected Cloudflare API identity returned 401 for sender provisioning. Verification emails were issued to both requested recipients. Complete Cloudflare sender setup for `reports.r3square.com`, verify both recipient addresses, then configure a sender such as `attendance@reports.r3square.com`. Existing company inbox/MX records must be preserved. No sender-domain or inbox DNS changes were executed in this checkout.
