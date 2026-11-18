@@ -1,9 +1,10 @@
 import {collectFaceSamples} from '/face-scan.js';
+import {loadFaceModels} from '/face-loader.js';
 const page = document.documentElement.dataset.page;
 let pendingRequests = 0;
 function requestLoading(start) { pendingRequests = Math.max(0,pendingRequests+(start?1:-1)); document.body.dataset.loading=String(pendingRequests>0); }
 const $ = s=>document.querySelector(s);
-const state={config:null,employees:[],models:null,library:null,stream:null,generation:0,admin:null,permissionPromise:null,permissionBusy:false};
+const state={config:null,employees:[],models:null,library:null,stream:null,generation:0,admin:null,permissionPromise:null,permissionBusy:false,modelProgress:null};
 const time = value=>value?new Date(value).toLocaleTimeString('en-IN',{timeZone:'Asia/Kolkata',hour:'2-digit',minute:'2-digit'}):'—';
 const message = (text,error=false)=>{const el=$('#notice');el.hidden=false;el.textContent=text;el.classList.toggle('error',error);};
 async function api(path,data) {requestLoading(true);try{const r=await fetch('/api/'+path,{method:data===undefined?'GET':'POST',headers:data===undefined?{}:{'Content-Type':'application/json'},body:data===undefined?undefined:JSON.stringify(data)});let b;try{b=await r.json();}catch{throw Error('Unable to reach the attendance service. Please retry.');}if(!r.ok)throw Object.assign(Error(b.error||'Request failed.'),{status:r.status});return b;}finally{requestLoading(false);}}
@@ -17,24 +18,37 @@ function tab(register) {$('#attendanceForm').hidden=register;$('#registerForm').
 $('#attendanceTab').onclick=()=>tab(false);$('#registerTab').onclick=()=>tab(true);
 for(const radio of document.querySelectorAll('[name=action]'))radio.onchange=()=>{$('#scanButton').replaceChildren(document.createTextNode(`Check ${radio.value==='in'?'in':'out'}`));};
 function cameraError(e) {if(e.name==='NotAllowedError')return 'Camera permission was denied. Allow camera access in your browser settings and retry.';if(e.name==='NotFoundError')return 'No camera found on this device.';if(e.name==='NotReadableError')return 'The camera is busy. Close other camera apps and retry.';return e.message||'Could not start camera.';}
+function reportModelProgress(progress){
+ state.modelProgress=progress;const dialog=$('#cameraDialog');
+ if(dialog.open && dialog.dataset.scanning==='true' && progress.phase!=='ready'){
+  $('#cameraStatus').textContent=progress.phase==='library'?'Loading face scanner…':`Loading face scanner… ${progress.percent}%`;
+  $('#cameraProgress span').style.width=`${progress.percent||0}%`;
+ }
+}
 async function models() {
  if(!window.faceapi){
-  if(!state.library)state.library=new Promise((resolve,reject)=>{const script=document.createElement('script');script.src='/vendor/face-api.js';script.onload=resolve;script.onerror=()=>{script.remove();state.library=null;reject(Error('Could not load the face scanner. Check your connection and retry.'));};document.head.append(script);});
+  if(!state.library)state.library=new Promise((resolve,reject)=>{
+   reportModelProgress({phase:'library',percent:0});const script=document.createElement('script');script.src='/vendor/face-api.js';
+   const timer=setTimeout(()=>{script.remove();state.library=null;reject(Error('Scanner download took too long. Close and retry with a stronger connection.'));},20000);
+   script.onload=()=>{clearTimeout(timer);resolve();};script.onerror=()=>{clearTimeout(timer);script.remove();state.library=null;reject(Error('Could not load the face scanner. Check your connection and retry.'));};document.head.append(script);
+  });
   await state.library;
  }
- if(!state.models)state.models=Promise.all([faceapi.nets.tinyFaceDetector.loadFromUri('/models'),faceapi.nets.faceLandmark68TinyNet.loadFromUri('/models'),faceapi.nets.faceRecognitionNet.loadFromUri('/models')]).catch(()=>{state.models=null;throw Error('Face models could not load. Check your connection and retry.');});
+ if(!state.models)state.models=loadFaceModels(faceapi,{report:reportModelProgress}).catch(error=>{state.models=null;throw error;});
  return state.models;
 }
+function warmScanner(){if(page!=='admin' && !navigator.connection?.saveData)void models().catch(()=>{});}
+$('#registerEmployee').addEventListener('change',warmScanner);
 async function showPermissions() {
  try {
   const checks=await Promise.all([navigator.permissions.query({name:'camera'}),navigator.permissions.query({name:'geolocation'})]);
-  if(checks[0].state==='granted' && (!state.config.office.enabled || checks[1].state==='granted'))return;
+  if(checks[0].state==='granted' && (!state.config.office.enabled || checks[1].state==='granted')){warmScanner();return;}
  }catch{}
  if(!$('#permissionDialog').open)$('#permissionDialog').showModal();
 }
 async function preparePermissions() {
  if(state.permissionBusy)return state.permissionPromise;
- state.permissionBusy=true;
+ state.permissionBusy=true;warmScanner();
  state.permissionPromise=(async()=>{
   const dialog=$('#permissionDialog'),label=$('#permissionText'),button=$('#enablePermissions');
   label.textContent='Choose Allow when your browser asks for camera and location access.';
@@ -64,8 +78,9 @@ async function openCamera(mode,onCapture) {
   const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});
   if(generation!==state.generation){stream.getTracks().forEach(t=>t.stop());return;}
   state.stream=stream;const video=$('#video');video.srcObject=stream;await video.play();
-  $('#cameraStatus').textContent='Preparing face verification…';await modelReady;
+  if(state.modelProgress?.phase!=='ready')reportModelProgress(state.modelProgress||{phase:'download',percent:0});await modelReady;
   if(generation!==state.generation)return;
+  $('#cameraProgress span').style.width='0%';$('#cameraStatus').textContent='Look at the camera…';
   void automaticScan(mode,onCapture,generation);
  }catch(e){if(generation!==state.generation)return;$('#cameraStatus').textContent=cameraError(e);dialog.dataset.scanning='false';stopCamera();}
 }

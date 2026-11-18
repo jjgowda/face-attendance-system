@@ -6,5 +6,5 @@ self.addEventListener('fetch',event=>{
  if(event.request.method!=='GET'||url.origin!==self.location.origin||url.pathname.startsWith('/api/'))return;
  // Attendance and biometric requests always require a live server. Never queue or cache them.
  if(event.request.mode==='navigate'){event.respondWith(fetch(event.request).catch(()=>caches.match('/offline.html')));return;}
- if(url.pathname.startsWith('/models/')||url.pathname==='/vendor/face-api.js')event.respondWith(caches.open(CACHE).then(async cache=>{const hit=await cache.match(event.request);if(hit)return hit;const response=await fetch(event.request);if(response.ok){try{await cache.put(event.request,response.clone());}catch{}}return response;}));
+ if(url.pathname.startsWith('/models/')||url.pathname==='/vendor/face-api.js')event.respondWith(caches.open(CACHE).then(async cache=>{const hit=await cache.match(event.request);if(hit)return hit;const response=await fetch(event.request);if(response.ok)event.waitUntil(cache.put(event.request,response.clone()).catch(()=>{}));return response;}));
 });
